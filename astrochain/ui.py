@@ -20,11 +20,20 @@ from .panels import keep_in_front
 from .slider_spacing import compact_sliders
 from .node_canvas import MODULE_CATALOG
 from .freeze import FreezeSettings, capture as capture_freeze,signature as freeze_signature
+from .diagnostics import format_error, log_report, report_error
 from .foraxx import is_foraxx
 
 class Events(QObject):
     done = pyqtSignal(object)
     progress = pyqtSignal(str)
+    diagnostic = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.diagnostic.connect(self.log_diagnostic)
+
+    def log_diagnostic(self, report):
+        log_report(getattr(self.parent(), 'ctx', None), report)
 
 class Job(QRunnable):
     def __init__(self, pipeline, snapshot, events, cancel, render):
@@ -75,6 +84,7 @@ class Job(QRunnable):
         except Cancelled:
             result['cancelled'] = True
         except Exception as exc:
+            self.events.diagnostic.emit(format_error(exc, 'processing'))
             result['error'] = english_message(str(exc))
         self.events.done.emit(result)
 
@@ -87,7 +97,9 @@ class FreezeJob(QRunnable):
             settings=capture_freeze(self.pipeline,self.s['state'],self.s['ghs'],self.s['integrated'],self.s['modules'],self.key,self.cancel,self.events.progress.emit)
             result=dict(settings=settings)
         except Cancelled:result=dict(cancelled=True)
-        except Exception as exc:result=dict(error=str(exc))
+        except Exception as exc:
+            self.events.diagnostic.emit(format_error(exc, 'freeze'))
+            result=dict(error=str(exc))
         self.events.done.emit(result)
 
 class DisplayJob(QRunnable):
@@ -98,7 +110,9 @@ class DisplayJob(QRunnable):
         try:
             mapped,applied=self.pipeline.visualize(self.raw,self.state,self.enabled)
             result.update(view_raw=self.raw,view_mapped=mapped,view_state=self.state,display_applied=applied)
-        except Exception as exc:result['error']=english_message(str(exc))
+        except Exception as exc:
+            self.events.diagnostic.emit(format_error(exc, 'display'))
+            result['error']=english_message(str(exc))
         self.events.done.emit(result)
 
 class Editor(QDialog):
@@ -263,6 +277,7 @@ class ChainDialog(QDialog):
                     if kind=='foraxx':
                         editor.controls['palette'].setCurrentText('Foraxx HOO')
         except Exception as exc:
+            report_error(self.ctx, exc, 'workflow')
             error=exc
             for node in reversed(added):
                 if node in self.canvas.modules:self.canvas.remove_module(node)
@@ -547,7 +562,9 @@ class ChainDialog(QDialog):
                         else:channel_meta['PALNODE']=payload['snapshot'].get('exports',{}).get('palette_source')
                         self.ctx.open_new_document(image,metadata=channel_meta,name='AstroChain_'+name)
                 self.status.setText('Rendering complete · '+payload.get('saved','new AstroSuite document'))
-            except Exception as exc:self.status.setText('OUTPUT error: '+str(exc))
+            except Exception as exc:
+                report_error(self.ctx, exc, 'output')
+                self.status.setText('OUTPUT error: '+str(exc))
         elif payload['snapshot']['revision']==self.revision:
             self.displayed=payload
             if payload['snapshot'].get('display_auto',True)!=self.display_auto.isChecked():self.pending_display=True
@@ -627,7 +644,9 @@ class ChainDialog(QDialog):
         try:
             from .freeze_project import save_project
             save_project(self.pipeline,self.snapshot(require_output=False),path)
-        except Exception as exc:QMessageBox.warning(self,'Project',str(exc))
+        except Exception as exc:
+            report_error(self.ctx, exc, 'project')
+            QMessageBox.warning(self,'Project',str(exc))
     def load_project(self):
         if self.busy:return
         path,_=QFileDialog.getOpenFileName(self,'Open project for the current source image','','JSON (*.json)')
@@ -636,7 +655,9 @@ class ChainDialog(QDialog):
             from .freeze_project import load_project
             snapshot=load_project(self.pipeline,path);self.apply_project(snapshot)
             self.release_unused_freezes()
-        except Exception as exc:QMessageBox.warning(self,'Project',str(exc))
+        except Exception as exc:
+            report_error(self.ctx, exc, 'project')
+            QMessageBox.warning(self,'Project',str(exc))
     def apply_project(self,snapshot):
         snapshot=deepcopy(snapshot)
         if snapshot.get('integrated'):

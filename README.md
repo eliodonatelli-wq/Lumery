@@ -1,4 +1,4 @@
-# Lumerys · Palette Studio Native — 0.10.0.dev15
+# Lumerys · Palette Studio Native — 0.10.0.beta1
 
 Isolated development version. The new **Palette Studio** node is a module in the
 Lumerys chain. The old **Nebula Palette** node is no longer available for

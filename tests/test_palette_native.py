@@ -33,8 +33,8 @@ class NativeEngineTests(unittest.TestCase):
   soft,_=render(a,replace(self.s,palette='SHO',synthetic=True,sii_softness=.01));self.assertGreater(soft[0,0,0],0);self.assertTrue(np.isfinite(soft).all())
  def test_faint_nebula_and_neutral_sky(self):
   image=np.full((65,65,3),.02);image[20:45,20:45]+=.003
-  s=replace(self.s,protect=True,sky=(.02,.02,0),noise=.0002,gains=(1,5,1))
-  out,d=render(image,s);np.testing.assert_allclose(out[0,0],np.mean(s.sky),atol=1e-7)
+  s=replace(self.s,protect=True,sky_roi=(0.,0.,.2,.2),gains=(1,5,1))
+  out,d=render(image,s);np.testing.assert_allclose(out[0,0],np.mean((.02,.1,.1)),atol=1e-7)
   self.assertGreater(out[32,32,1]-out[0,0,1],.01);self.assertGreater(d['mask'][32,32],.9)
  def test_protection_off_exact(self):
   a,_=render(self.rgb,self.s);b,_=render(self.rgb,replace(self.s,protection=0,protect=True,sky=(.02,.03,0)));np.testing.assert_allclose(a,b,atol=1e-15)

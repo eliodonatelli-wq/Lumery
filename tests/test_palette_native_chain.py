@@ -54,9 +54,20 @@ class NativeChainTests(unittest.TestCase):
   from astrochain.palette_native_editor import NativePaletteEditor
   app=QApplication.instance() or QApplication([])
   class Owner(QWidget):
+   def __init__(self):
+    super().__init__()
+    from types import SimpleNamespace
+    self.view=SimpleNamespace(set_sky_roi=lambda roi:None)
    def schedule(self,*args):pass
   owner=Owner();s=replace(Settings(),palette='SHO',synthetic=True,gains=(1,2,3));editor=NativePaletteEditor(owner,s,'test')
-  self.assertEqual(editor.settings(),s);editor.reset();self.assertEqual(editor.settings(),Settings());self.assertFalse(editor.bypass.isChecked());editor.close()
+  def assert_settings(actual,expected):
+   from dataclasses import asdict
+   values=asdict(expected)
+   for key,value in asdict(actual).items():
+    if isinstance(value,(tuple,float)):
+     np.testing.assert_allclose(value,values[key],rtol=1e-12,atol=1e-12,err_msg=key)
+    else:self.assertEqual(value,values[key],key)
+  assert_settings(editor.settings(),s);editor.reset();assert_settings(editor.settings(),Settings());self.assertFalse(editor.bypass.isChecked());editor.close()
 if __name__=='__main__':unittest.main()
 
 class NativeHostFlowTests(unittest.TestCase):
