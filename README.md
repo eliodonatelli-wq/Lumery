@@ -1,140 +1,156 @@
 # Lumerys · Palette Studio Native — 0.10.0.dev15
 
-Versione di sviluppo isolata. Il nuovo nodo **Palette Studio** è un modulo della
-catena Lumerys. Il vecchio nodo **Nebula Palette** non è più disponibile per
-nuovi inserimenti; resta caricabile nei progetti salvati per compatibilità.
-La build è installata nella cartella dedicata `lumerys_palette_native_dev`;
-i plugin AstroSuite standalone restano invariati.
+Isolated development version. The new **Palette Studio** node is a module in the
+Lumerys chain. The old **Nebula Palette** node is no longer available for
+new insertions; it can still be loaded from saved projects for compatibility.
+The local development build is installed in the dedicated `lumerys_palette_native_dev` folder;
+the standalone AstroSuite plugins remain unchanged.
 
-## Avvio
+## Getting started
 
-Chiudere il pannello Lumerys, scegliere **Reload Scripts** in SASpro e aprire
-**Lumerys · Palette Native DEV**. Aggiungere **Palette Studio** e collegare
-INPUT → Palette Studio → OUTPUT. Confermare lo stato dell'immagine in INPUT.
-Il bypass è disponibile sul nodo e nel pannello. Reset all ripristina i default.
-Il risultato viene aperto con il Render comune o salvato con Export FITS comune.
-Per rimuovere questa DEV eliminare soltanto la cartella `lumerys_palette_native_dev`
-dagli script e ricaricare gli script. Il rollback della build precedente si trova
-nell'archivio di backup incluso nella cartella reports.
+Close the Lumerys panel, select **Reload Scripts** in SASpro, and open
+**Lumerys · Palette Native DEV**. Add **Palette Studio** and connect
+INPUT → Palette Studio → OUTPUT. Confirm the image state in INPUT.
+Bypass is available on the node and in its panel. Reset all restores the defaults.
+The result is opened through the shared Render action or saved through the shared Export FITS action.
+To remove this DEV installation, delete only the `lumerys_palette_native_dev` folder
+from the scripts directory and reload the scripts. The previous build can be restored
+from the backup archive retained in the local reports folder; backups are not tracked in Git.
 
-## Flusso di partenza suggerito
+## Suggested starting workflow
 
-Quando la catena è vuota, il pannello **Suggested starting workflow** offre tre
-tracce modificabili: OSC/RGB (Nebula Colors & Tone → Adaptive GHS → Curves),
-narrowband classico (Palette Studio → Adaptive GHS → Curves) e Foraxx
-(Adaptive GHS → Palette Studio Foraxx HOO → Curves). Cliccare una proposta monta
-subito tutti i nodi reali, nell'ordine indicato, e collega INPUT a OUTPUT. Le
-impostazioni iniziali restano modificabili. La proposta non avvia render o export.
-Confermare prima lo stato dei dati in INPUT;
-per Foraxx verificare la normalizzazione 0–1 dei canali usati. Per narrowband
-mono fornire i FITS registrati e confermarne l'allineamento. Compressor,
-Equalizer, Parametric EQ e Filament restano moduli facoltativi da inserire quando
-servono. Freeze può fissare un passaggio intermedio.
+When the chain is empty, the **Suggested starting workflow** panel offers three
+editable routes: OSC/RGB (Nebula Colors & Tone → Adaptive GHS → Curves),
+classic narrowband (Palette Studio → Adaptive GHS → Curves), and Foraxx
+(Adaptive GHS → Palette Studio Foraxx HOO → Curves). Clicking a suggestion immediately
+inserts all the actual nodes in the specified order and connects INPUT to OUTPUT. The
+initial settings remain editable. The suggestion does not start a render or export.
+First confirm the data state in INPUT;
+for Foraxx, check the normalization of the channels used to the 0–1 range. For monochrome
+narrowband input, provide registered FITS channels and confirm their alignment. Compressor,
+Equalizer, Parametric EQ, and Filament remain optional modules to add as
+needed. Freeze can capture an intermediate processing stage.
 
-## Palette incluse
+## Included palettes
 
-Combinazioni lineari: HOO (Hα, OIII, OIII), SHO (SII, Hα, OIII), HSO, HOS, SOH, OSH e OHS. I codici indicano i gas assegnati a R/G/B. HOO riusa OIII su verde e blu; le altre permutazioni assegnano una volta ciascun gas. La matrice personalizzata resta disponibile per mappature diverse.
+Linear combinations: HOO (Hα, OIII, OIII), SHO (SII, Hα, OIII), HSO, HOS, SOH, OSH, and OHS. The codes identify the gases assigned to R/G/B. HOO reuses OIII for green and blue; the other permutations assign each gas once. The custom matrix remains available for other mappings.
 
-Foraxx HOO e Foraxx SHO usano le formule dinamiche PIP (Foraxx, Ludo / The Coldest Nights). Foraxx richiede ingresso dichiarato non-lineare. La Palette Studio misura i canali effettivamente usati dopo curve e guadagni. Se il massimo supera 1, applica un solo divisore comune a tutti quei canali prima della formula: preserva i rapporti e non clippa i dati. I valori negativi restano un errore esplicito e sono accompagnati dagli intervalli per canale; per correggerli si possono regolare curve, guadagni o normalizzazione fissa. La SII sintetica Foraxx è positiva e limitata a [0,1]. La selezione Foraxx SHO attiva automaticamente la sintesi. Nessuno stretch automatico dell'immagine sorgente.
+Foraxx HOO and Foraxx SHO use the dynamic PIP formulas (Foraxx, Ludo / The Coldest Nights). Foraxx requires input declared as nonlinear. Palette Studio measures the channels actually used after gas curves and gains. If their maximum exceeds 1, it applies a single shared divisor to all those channels before the formula: this preserves ratios without clipping those inputs. Negative values remain an explicit error, accompanied by per-channel ranges; adjust curves, gains, or fixed normalization to correct them. The Foraxx synthetic SII component is non-negative and limited to [0,1] before its gas curve and gain. Selecting Foraxx SHO automatically enables synthesis. No automatic stretch is applied to the source image.
 
-Credito e formula originale: [The Coldest Nights — Dynamic Narrowband Combinations with PixelMath](https://thecoldestnights.com/2020/06/pixinsight-dynamic-narrowband-combinations-with-pixelmath/). PIP `t=(H×O)^(1−H×O)`, verde `t×H+(1−t)×O`; Foraxx SHO miscela H/S con `u=O^(1−O)`.
+Credit and original formula: [The Coldest Nights — Dynamic Narrowband Combinations with PixelMath](https://thecoldestnights.com/2020/06/pixinsight-dynamic-narrowband-combinations-with-pixelmath/). PIP `t=(H×O)^(1−H×O)`, green `t×H+(1−t)×O`; Foraxx SHO blends H/S using `u=O^(1−O)`.
 
-## Segnali e composizione
+## Signals and composition
 
-Default: Hα = R, OIII = (G+B)/2; SII assente. Sono stime numeriche, non una
-separazione fisica garantita, soprattutto per RGB a banda larga e dati stirati.
-La matrice di estrazione espone i coefficienti; nessuna calibrazione sensore è
-nascosta. I segnali FITS devono essere mono, finiti, della stessa dimensione
-dell'ingresso e già registrati allo stesso campo. La conferma manuale di
-allineamento è obbligatoria: non viene eseguita astrometria o registrazione.
-Si usa Astropy, già presente per l'OUTPUT FITS. Nessun secondo importatore host,
-stretch o esportatore viene introdotto.
+Defaults: Hα = R, OIII = (G+B)/2; SII is absent. These are numerical estimates, not a
+guaranteed physical separation, particularly for broadband RGB and stretched data.
+The extraction matrix exposes its coefficients; no sensor calibration is
+hidden. FITS signals must be monochrome, finite, match the input dimensions,
+and already be registered to the same field. Manual confirmation of
+alignment is mandatory: no astrometry or registration is performed.
+Astropy is used, as it already is for FITS OUTPUT. No second host importer,
+stretch, or exporter is introduced.
 
-Ordine: acquisizione → normalizzazione opzionale → sintesi SII opzionale →
-curve gas → guadagni → matrice RGB → curve RGB. Con protezione attiva, curve gas
-e guadagni operano sul residuo dal fondo specificato, come indicato sotto.
+Order: acquisition → optional normalization → optional SII synthesis →
+gas curves → gains → RGB composition → optional sky neutralization → RGB curves.
+Sky neutralization applies a constant RGB shift after composition, as described below.
 
-Ordine gas: (Hα,OIII,SII). HOO = (Hα,OIII,OIII). SHO = (SII,Hα,OIII).
-La matrice personalizzata ha righe R,G,B e colonne Hα,OIII,SII e sostituisce
-la matrice della palette. Se la matrice richiede SII e manca il segnale,
-l'elaborazione si ferma con un errore esplicito.
+Gas order: (Hα,OIII,SII). HOO = (Hα,OIII,OIII). SHO = (SII,Hα,OIII).
+For linear palettes, the custom matrix has R,G,B rows and Hα,OIII,SII columns and replaces
+the palette matrix. Foraxx uses its dynamic formulas instead of this matrix.
+If the composition requires SII and the signal is missing,
+processing stops with an explicit error.
 
-Normalizzazione disattivata per default. Quando attiva:
-`gas = (gas - offset) / scale`, con un solo offset e divisore manuali.
-Il sistema comune di INPUT mantiene le sue convenzioni esistenti per interi.
+Normalization is disabled by default. When enabled:
+`gas = (gas - offset) / scale`, using one manually specified offset and divisor.
+The shared INPUT system retains its existing conventions for integer data.
 
-SII artificiale: `S = gain * (H - subtraction*O)`. Softness=0 conserva il segno.
-Con softness>0, il residuo x diventa `(x + hypot(x,softness))/2` prima del gain.
-La sintesi sostituisce l'eventuale SII in ingresso ed è sempre identificata come
-artificiale. Non costituisce una misura di zolfo. I nomi dei componenti esportati
-identificano separatamente stime RGB e SII sintetico.
+Artificial SII: `S = gain * (H - subtraction*O)`. Softness=0 preserves the sign.
+With softness>0, the residual x becomes `(x + hypot(x,softness))/2` before the gain.
+Synthesis replaces any input SII and is always identified as
+artificial. It is not a sulfur measurement. Exported component names
+separately identify RGB estimates and synthetic SII. Foraxx SHO uses the bounded,
+non-negative synthetic component described above rather than this signed/softened variant.
 
-Le curve monotone usano il componente numerico comune PCHIP, con extrapolazione
-lineare delle tangenti oltre il dominio. Non c'è clipping dei campioni, né
-normalizzazione ai massimi, riduzione verde, bilanciamento automatico o stretch.
-Valori negativi e superiori a 1 restano nei risultati numerici. La visualizzazione
-può saturarli senza modificare l'immagine esportata.
+Monotone curves use the shared PCHIP numerical component, with linear tangent
+extrapolation outside the domain. Curve evaluation does not clip samples or apply
+maximum-based normalization, green reduction, automatic balancing, or a stretch.
+Negative values and values above 1 remain in the numerical results where permitted
+by the selected composition; the Foraxx input restrictions are described above.
+The display may saturate these values without changing the exported image.
 
-## Neutralizzazione del cielo
+## Sky neutralization
 
-Disattivata per default. Attivarla, premere **Seleziona rettangolo del fondo cielo**
-e trascinare un rettangolo su una zona vuota dell’immagine nel pannello di anteprima
-comune. La selezione viene fatta sull’ingresso del nodo, salvata come coordinate
-relative all’immagine e applicata ai pixel nativi. Si può rimuovere in ogni momento.
+Disabled by default. Enable it, click **Seleziona rettangolo del fondo cielo**
+("Select sky background rectangle"), and drag a rectangle over an empty area of the image
+in the shared preview panel. The selection is made on the node input, saved as
+image-relative coordinates, and applied at native resolution. It can be removed at any time.
 
-La mediana RGB del rettangolo viene portata a un livello neutro (media dei tre
-canali) con una traslazione cromatica costante, regolata dall’intensità. La stessa
-traslazione si applica a tutti i pixel: conserva le differenze fra pixel e non
-classifica né cancella la nebulosità debole. Non corregge gradienti spaziali;
-scegliere una zona vuota e rappresentativa del fondo. Il campione descrive il
-fondo al punto selezionato, mentre la traslazione uniforme presume un fondo
-abbastanza costante. Valori negativi restano ammessi, senza clipping.
+The rectangle's median RGB values, measured after palette composition, are shifted
+toward a neutral level (the mean of the three channels) using a constant color shift,
+controlled by the strength setting. The same shift is applied to every pixel:
+it preserves pixel-to-pixel differences at this stage and neither classifies nor erases
+faint nebulosity. It does not correct spatial gradients;
+choose an empty area representative of the background. The sample describes the
+background at the selected location, while the uniform shift assumes a
+reasonably constant background. Negative values remain allowed, without clipping.
+RGB curves are applied afterward and may change these differences.
 
-La maschera diagnostica mostra in bianco l’area a cui si applica la correzione;
-la vista usa il preview comune e non entra nell’output finale.
+The diagnostic mask represents the correction strength across the whole image;
+at full strength, the affected area is white. This view uses the shared preview
+and is not included in the final output.
 
-## Risoluzioni, cache e dati
+## Resolutions, cache, and data
 
-Il nodo riceve l'ingresso nativo, esegue il motore una volta a piena risoluzione,
-e riduce il risultato con il ricampionamento comune per 1/2,1/4,1/8. Per ottenere
-l'ingresso nativo viene eseguito il prefisso della catena a Full, rispettando Freeze.
-Si evita il cambio di colori dovuto a statistiche o non linearità sui proxy.
-Il primo aggiornamento e i cambiamenti a monte possono quindi costare più tempo
-rispetto ai vecchi proxy; la cache conserva il risultato nativo. Un singolo frame
-nativo può superare il budget cache, come il checkpoint Freeze.
+The node receives the native input, runs its engine once at full resolution,
+and reduces the result using the shared resampling for 1/2,1/4,1/8. To obtain
+the native input, the preceding chain is evaluated at Full resolution, respecting Freeze.
+This avoids color changes caused by statistics or nonlinear operations on proxies.
+The first update and upstream changes may therefore take longer
+than the old proxy processing; the cache retains the native result. A single native
+frame may exceed the cache budget, as can a Freeze checkpoint.
 
-La coerenza dimostrata riguarda l'uscita di questo nodo: altri moduli a valle
-possono avere proprie approssimazioni alle diverse risoluzioni.
+The demonstrated consistency concerns this node's output: downstream modules
+may have their own approximations at different resolutions.
 
-I FITS esterni sono verificati tramite SHA-256, anche nelle chiavi cache.
-Il progetto salva percorsi e impronte; se i file cambiano il caricamento viene
-rifiutato. I FITS non sono incorporati nel progetto: conservarli insieme ai dati.
-Non viene modificato alcun file sorgente.
+External FITS files are checked using SHA-256, including in cache keys.
+The project saves paths and fingerprints; loading is
+rejected if the files have changed. FITS files are not embedded in the project:
+keep them with your data. No source image file is modified.
 
-## Validazione e limiti
+## Validation and limitations
 
-Vedere reports/final_tests.log, real_verification.json e integrity.json.
-Test automatici: motore numerico, matrici, curve, sintesi, dati firmati, maschera,
-risoluzioni, bypass, reset, serializzazione, input FITS, render con host simulato,
-maschera solo display ed esportazione tramite servizi comuni.
+See the local reports/final_tests.log, reports/real_verification.json, and reports/integrity.json.
+These generated reports are excluded from Git. Recorded automated checks cover the
+numerical engine, matrices, curves, synthesis, signed data, masks,
+resolutions, bypass, reset, serialization, FITS input, rendering with a simulated host,
+display-only masks, and export through shared services.
 
-Prova reale: ingresso astronomico archiviato 2021×2922 pixel, HOO completo;
-anteprime 1/2,1/4,1/8 identiche al Full ridotto. Il confronto PNG contiene un
-ritaglio centrale: originale | HOO | SHO con SII artificiale, scala display uguale.
-La qualità della protezione del fondo su quel campo non è certificata.
+Real-data verification: a stored astronomical input of 2021×2922 pixels, full HOO;
+1/2,1/4,1/8 previews identical to the downsampled Full result. The comparison PNG contains a
+central crop: original | HOO | SHO with artificial SII, using the same display scale.
+The quality of sky protection on that field has not been certified.
 
-Test UI eseguiti offscreen sul Mac con Qt del runtime di sviluppo.
-NON verificati: sessione interattiva SASpro, secondo Mac, Windows.
-Questa DEV non è una release di produzione.
+UI tests were run offscreen on the Mac using Qt from the development runtime.
+NOT verified by these checks: an interactive SASpro session, a second Mac, or Windows.
+This DEV build is not a production release.
 
-## File e riproduzione
+## Files and reproduction
 
-`AstroChain_Prototype.py` e `_astrochain_lib.zip` devono restare insieme;
-lo ZIP interno non va estratto. L'archivio esterno contiene anche src/, tests/,
-rapporti e questo documento. Dipendenze: Python 3.12, NumPy, SciPy, PyQt6,
-Astropy (solo ingressi/esportazioni FITS). Nessuna nuova libreria richiesta a SASpro.
+For the packaged installation, keep `AstroChain_Prototype.py` and `_astrochain_lib.zip`
+together; do not extract the internal ZIP. The development distribution archive also
+contains src/, tests/, reports, and this document. Generated ZIPs and reports are not
+tracked in Git. In a source checkout, `astrochain/` is directly at the repository root;
+when the library ZIP is absent, the launcher loads that source package instead.
+Dependencies: Python 3.12, NumPy, SciPy, PyQt6, pyqtgraph, and
+Astropy (for FITS input/export). Palette Studio introduces no additional library requirement for SASpro.
 
-Per i test dedicati in un ambiente con tali dipendenze:
-`PYTHONPATH=src QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests`
-La suite completa locale include anche confronti con i moduli originali conservati
-nel workspace; il rapporto ne registra l'esecuzione.
+To run the dedicated numerical tests from the repository root with these dependencies:
+`PYTHONPATH=. QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -p 'test_palette_native.py'`
+For the full local suite, use `PYTHONPATH=. QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests`.
+It also includes comparisons against original modules and plugin ZIPs in the local SASpro
+scripts installation; those references are not included in this repository.
+The local report records the suite's execution. `verify_real.py` additionally requires
+an external astronomical input from the adjacent Chain Studio workspace.
+The current `build_release.py` is a historical, environment-specific packaging and
+installation script; it depends on adjacent development files, local logs, and an
+existing SASpro installation and is not a standalone build command for a fresh clone.
