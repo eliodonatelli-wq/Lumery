@@ -1,0 +1,57 @@
+# Cache Python e strumenti di verifica
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Ambienti virtuali
+.venv/
+venv/
+
+# File locali
+.DS_Store
+.env
+.env.*
+!.env.example
+*.swp
+*.swo
+*~
+
+# Pacchetti e risultati di build
+*.zip
+/build/
+/dist/
+*.egg-info/
+/SHA256SUMS.txt
+
+# Backup e temporanei
+/backups/
+/backup/
+/tmp/
+/temp/
+*.bak
+*.orig
+*.tmp
+
+# Rapporti generati e backup storici
+/reports/*
+!/reports/architecture.md
+
+# Log
+*.log
+
+# Dati astronomici e array
+*.fits
+*.fit
+*.fts
+*.fits.gz
+*.fit.gz
+*.fts.gz
+*.fz
+*.xisf
+*.npy
+*.npz
