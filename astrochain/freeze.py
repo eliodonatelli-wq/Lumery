@@ -19,8 +19,15 @@ class FreezeSettings:
         if self.token and (not self.signature or not self.source):raise ValueError('Incomplete Freeze reference')
 
 def signature(pipeline,state,input_settings,integrated,modules):
+    from .palette_native_inputs import signature as input_signature
     recipe=dict(source=pipeline.fingerprint,state=state,integrated=integrated,input=asdict(input_settings) if integrated else None,
                 modules=[{k:(asdict(m[k]) if k=='settings' else m[k]) for k in ('id','kind','settings','bypass','force','auto_reference') if k in m} for m in modules])
+    external={}
+    for m in modules:
+        if m['kind']=='palette_native' and not m['bypass'] and m['settings'].source=='fits_channels':
+            try:external[m['id']]=input_signature(m['settings'])
+            except (OSError,ValueError):external[m['id']]='unavailable'
+    if external:recipe['external_inputs']=external
     return hashlib.sha256(json.dumps(recipe,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
 
 def capture(pipeline,state,input_settings,integrated,modules,node_id,cancel=None,progress=None):

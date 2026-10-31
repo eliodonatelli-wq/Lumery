@@ -9,8 +9,8 @@ No estimator is allowed to silently infer a physical gas separation from RGB.
 from dataclasses import dataclass
 import numpy as np
 from .tone_curve import IDENTITY, evaluate, validate_points
-VERSION='1.2.2'
-COMPATIBLE_VERSIONS=('1.2.1',VERSION)
+VERSION='1.2.3'
+COMPATIBLE_VERSIONS=('1.2.1','1.2.2',VERSION)
 HOO=((1.,0.,0.),(0.,1.,0.),(0.,1.,0.))
 SHO=((0.,0.,1.),(1.,0.,0.),(0.,1.,0.))
 PERMUTATIONS=('HOO','SHO','HSO','HOS','SOH','OSH','OHS')
@@ -47,6 +47,7 @@ class NativePaletteSettings:
     oiii_path:str=''
     sii_path:str=''
     alignment_confirmed:bool=False
+    fits_nonlinear:bool=False
     def __post_init__(self):
         if self.palette not in PALETTES or self.source not in ('rgb_estimate','fits_channels'):raise ValueError('Invalid palette or signal source')
         for name,shape in [('extraction',(3,3)),('matrix',(3,3)),('gains',(3,)),('sky',(3,))]:
@@ -62,7 +63,7 @@ class NativePaletteSettings:
             v=getattr(self,name)
             if isinstance(v,bool) or not isinstance(v,(float,int)) or not np.isfinite(v):raise ValueError('Invalid '+name)
         if self.norm_scale<=0 or self.noise<=0 or self.transition<=0 or not 0<=self.protection<=1 or min(self.sii_gain,self.sii_subtract,self.sii_softness)<0:raise ValueError('Invalid numeric range')
-        for name in ('custom_matrix','synthetic','normalize','protect','mask_view','alignment_confirmed'):
+        for name in ('custom_matrix','synthetic','normalize','protect','mask_view','alignment_confirmed','fits_nonlinear'):
             if type(getattr(self,name)) is not bool:raise ValueError('Invalid '+name)
         for name in ('ha_path','oiii_path','sii_path'):
             if not isinstance(getattr(self,name),str):raise ValueError('Invalid channel path')
@@ -73,6 +74,9 @@ class NativePaletteSettings:
     def nonlinear(self):
         return self.requires_nonlinear() or self.sii_softness>0 or any(c!=IDENTITY for c in self.gas_curves+self.rgb_curves) or self.protect
     def requires_nonlinear(self):return self.palette in FORAXX
+
+    def input_is_nonlinear(self,chain_state):
+        return self.fits_nonlinear if self.source=='fits_channels' else chain_state=='nonlinear'
 
 def validate_image(image):
     a=np.asarray(image)
@@ -100,7 +104,7 @@ def acquire(image,s,channels=None):
         residual=gas[...,0]-s.sii_subtract*gas[...,1]
         if s.sii_softness:residual=(residual+np.hypot(residual,s.sii_softness))*.5
         gas[...,2]=s.sii_gain*residual;has_sii=True
-    if (bool(np.any(np.asarray(s.matrix)[:,2])) if s.custom_matrix else s.palette in ('SHO','Foraxx SHO · synthetic SII')) and not has_sii:raise ValueError('Composition requires acquired/estimated SII or explicit synthetic SII')
+    if (bool(np.any(np.asarray(s.matrix)[:,2])) if s.custom_matrix else 'S' in s.palette) and not has_sii:raise ValueError('Composition requires acquired/estimated SII or explicit synthetic SII')
     return gas
 
 def _foraxx_common_scale(channels,names):
@@ -122,6 +126,8 @@ def render(image,s,channels=None,cancel=None):
     The correction strength is explicit and can be set to zero.
     """
     if cancel is not None and cancel.is_set():raise InterruptedError('Cancelled')
+    if s.source=='fits_channels' and s.requires_nonlinear() and not s.fits_nonlinear:
+        raise ValueError('Foraxx requires already stretched FITS channels. Upstream GHS does not process external files; select non-linear FITS and confirm their state in Palette Studio.')
     gas=acquire(image,s,channels)
     mask=np.zeros(gas.shape[:2],dtype=np.float64)
     curved=np.stack([evaluate(gas[...,i],c) for i,c in enumerate(s.gas_curves)],-1)*np.asarray(s.gains)
@@ -136,7 +142,7 @@ def render(image,s,channels=None,cancel=None):
             # Foraxx SHO uses a non-negative synthetic SII component. Keep the
             # signed synthetic channel for classic SHO, but build this named
             # Foraxx variant with its explicit positive SII definition.
-            sii=np.clip(np.maximum(gas[...,0]-s.sii_subtract*gas[...,1],0.)*s.sii_gain,0.,1.)
+            sii=np.maximum(gas[...,0]-s.sii_subtract*gas[...,1],0.)*s.sii_gain
             sulfur=evaluate(sii,s.gas_curves[2])*s.gains[2]
             required=np.stack((h,o,sulfur),-1)
             required,common_scale,channel_ranges=_foraxx_common_scale(required,('Hα','OIII','SII sintetico'))

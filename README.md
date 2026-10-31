@@ -1,4 +1,4 @@
-# Lumerys · Palette Studio Native — 0.10.0.beta1
+# Lumerys · Palette Studio Native — 0.10.0.beta2
 
 Isolated development version. The new **Palette Studio** node is a module in the
 Lumerys chain. The old **Nebula Palette** node is no longer available for
@@ -35,7 +35,7 @@ needed. Freeze can capture an intermediate processing stage.
 
 Linear combinations: HOO (Hα, OIII, OIII), SHO (SII, Hα, OIII), HSO, HOS, SOH, OSH, and OHS. The codes identify the gases assigned to R/G/B. HOO reuses OIII for green and blue; the other permutations assign each gas once. The custom matrix remains available for other mappings.
 
-Foraxx HOO and Foraxx SHO use the dynamic PIP formulas (Foraxx, Ludo / The Coldest Nights). Foraxx requires input declared as nonlinear. Palette Studio measures the channels actually used after gas curves and gains. If their maximum exceeds 1, it applies a single shared divisor to all those channels before the formula: this preserves ratios without clipping those inputs. Negative values remain an explicit error, accompanied by per-channel ranges; adjust curves, gains, or fixed normalization to correct them. The Foraxx synthetic SII component is non-negative and limited to [0,1] before its gas curve and gain. Selecting Foraxx SHO automatically enables synthesis. No automatic stretch is applied to the source image.
+Foraxx HOO and Foraxx SHO use the dynamic PIP formulas (Foraxx, Ludo / The Coldest Nights). Foraxx requires input declared as nonlinear. Palette Studio measures the channels actually used after gas curves and gains. If their maximum exceeds 1, it applies a single shared divisor to all those channels before the formula: this preserves ratios without clipping those inputs. Negative values remain an explicit error, accompanied by per-channel ranges; adjust curves, gains, or fixed normalization to correct them. The Foraxx synthetic SII component is non-negative, with no upper clipping before its gas curve and gain; the final shared divisor includes its full range. Selecting Foraxx SHO automatically enables synthesis. No automatic stretch is applied to the source image.
 
 Credit and original formula: [The Coldest Nights — Dynamic Narrowband Combinations with PixelMath](https://thecoldestnights.com/2020/06/pixinsight-dynamic-narrowband-combinations-with-pixelmath/). PIP `t=(H×O)^(1−H×O)`, green `t×H+(1−t)×O`; Foraxx SHO blends H/S using `u=O^(1−O)`.
 
@@ -47,6 +47,12 @@ The extraction matrix exposes its coefficients; no sensor calibration is
 hidden. FITS signals must be monochrome, finite, match the input dimensions,
 and already be registered to the same field. Manual confirmation of
 alignment is mandatory: no astrometry or registration is performed.
+External FITS are independent signal inputs: upstream GHS, Curves, and other
+image modules do not transform these files. Confirm their already stretched
+state with the external-FITS checkbox before using Foraxx. Classic FITS mappings
+start from the declared FITS state, rather than inheriting upstream image state.
+Older projects remain readable; external FITS default to linear and require an
+explicit confirmation before Foraxx can render.
 Astropy is used, as it already is for FITS OUTPUT. No second host importer,
 stretch, or exporter is introduced.
 
@@ -68,7 +74,7 @@ Artificial SII: `S = gain * (H - subtraction*O)`. Softness=0 preserves the sign.
 With softness>0, the residual x becomes `(x + hypot(x,softness))/2` before the gain.
 Synthesis replaces any input SII and is always identified as
 artificial. It is not a sulfur measurement. Exported component names
-separately identify RGB estimates and synthetic SII. Foraxx SHO uses the bounded,
+separately identify RGB estimates and synthetic SII. Foraxx SHO uses the
 non-negative synthetic component described above rather than this signed/softened variant.
 
 Monotone curves use the shared PCHIP numerical component, with linear tangent
@@ -131,16 +137,24 @@ central crop: original | HOO | SHO with artificial SII, using the same display s
 The quality of sky protection on that field has not been certified.
 
 UI tests were run offscreen on the Mac using Qt from the development runtime.
-NOT verified by these checks: an interactive SASpro session, a second Mac, or Windows.
-This DEV build is not a production release.
+Beta 2 passed 226 automated tests, including 10 review regression tests and
+launcher checks for both the source checkout and portable package. After
+installation on the user's Mac, the user tested it inside AstroSuite on
+2026-10-31, reported that everything appeared correct, and accepted beta 2 as
+the current version. This is user-reported live validation, not an exhaustive
+host test matrix. The previous DEV15 installation is retained outside the active
+Scripts directory for recovery. A second Mac and Windows remain unverified.
+This beta is not a production release.
 
 ## Files and reproduction
 
 For the packaged installation, keep `AstroChain_Prototype.py` and `_astrochain_lib.zip`
-together; do not extract the internal ZIP. The development distribution archive also
-contains src/, tests/, reports, and this document. Generated ZIPs and reports are not
-tracked in Git. In a source checkout, `astrochain/` is directly at the repository root;
-when the library ZIP is absent, the launcher loads that source package instead.
+together; do not extract the internal ZIP. The portable beta package contains the
+launcher, library ZIP, and installation instructions. Generated ZIPs and reports
+are not tracked in Git. In a source checkout, `astrochain/` is directly at the
+repository root and takes priority over any historical library ZIP beside it.
+Build the portable package with `python package_beta.py`; it never overwrites an
+existing package or changes the host installation.
 Dependencies: Python 3.12, NumPy, SciPy, PyQt6, pyqtgraph, and
 Astropy (for FITS input/export). Palette Studio introduces no additional library requirement for SASpro.
 

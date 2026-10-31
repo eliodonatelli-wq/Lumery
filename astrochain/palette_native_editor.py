@@ -65,6 +65,8 @@ class NativePaletteEditor(QDialog):
         for key,label in [('ha_path','Hα FITS'),('oiii_path','OIII FITS'),('sii_path','SII FITS (optional)')]:
             row=QHBoxLayout();line=QLineEdit();self.controls[key]=line;row.addWidget(line);button=QPushButton('Browse');row.addWidget(button);button.clicked.connect(lambda _,k=key:self.browse(k));line.editingFinished.connect(self.changed);f.addRow(label,row)
         self.check(f,'alignment_confirmed','I confirm all FITS channels are registered to the chain image')
+        self.check(f,'fits_nonlinear','External FITS channels are already non-linear (stretched)')
+        self.controls['fits_nonlinear'].setToolTip('Applies to external FITS only. Upstream GHS and Curves process the chain image, not these files. Foraxx requires already stretched channel files.')
         self.spins(f,'gains','Gas gains Hα / OIII / SII',3,-100,100)
         self.check(f,'custom_matrix','Use custom composition matrix (rows R,G,B; columns Hα,OIII,SII)')
         self.matrix_controls=self.spins(f,'matrix','Custom RGB matrix',9,-100,100)

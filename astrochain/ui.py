@@ -492,9 +492,13 @@ class ChainDialog(QDialog):
             if node.kind=='palette_native' and editor.settings().requires_nonlinear():requirement='nonlinear'
             status='bypass' if editor.bypass.isChecked() else 'unknown' if state=='unknown' else 'skipped' if requirement=='linear' and state=='nonlinear' else 'ok'
             if requirement=='nonlinear' and state=='linear' and not editor.bypass.isChecked():status='invalid'
+            if node.kind=='palette_native' and editor.settings().source=='fits_channels' and not editor.bypass.isChecked():
+                status='invalid' if editor.settings().requires_nonlinear() and not editor.settings().fits_nonlinear else 'ok'
             node.set_compatibility(requirement,status)
             if node.kind=='freeze' and status=='ok' and editor.settings().token:state=editor.settings().state
-            if node.kind=='palette_native' and status=='ok' and editor.settings().nonlinear():state='nonlinear'
+            if node.kind=='palette_native' and status=='ok':
+                if editor.settings().source=='fits_channels':state='nonlinear' if editor.settings().fits_nonlinear else 'linear'
+                if editor.settings().nonlinear():state='nonlinear'
             if node.kind=='curves' and status=='ok' and not editor.settings().identity():state='nonlinear'
             if node.kind=='ghs' and status=='ok' and not identity_ghs(editor.settings()):state='nonlinear'
             if node.kind=='colors' and status=='ok' and any(editor.settings().values()['tone'].get(k,0)!=0 for k in ('highlights','shadows','whites','blacks')):state='nonlinear'

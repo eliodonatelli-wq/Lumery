@@ -34,7 +34,9 @@ def load_project(pipeline,path):
             if not required.issubset(set(archive.files)):raise ValueError('Freeze archive is incomplete')
             for key in required:
                 image=archive[key]
-                if image.shape!=pipeline.source.shape or image.dtype not in (np.dtype('float32'),np.dtype('float64')) or not np.isfinite(image).all():raise ValueError('Invalid frozen pixels')
+                if (image.shape[:2]!=pipeline.source.shape[:2] or image.ndim not in (2,3)
+                    or (image.ndim==3 and image.shape[-1]!=3)
+                    or image.dtype not in (np.dtype('float32'),np.dtype('float64')) or not np.isfinite(image).all()):raise ValueError('Invalid frozen pixels')
                 image.setflags(write=False);frames[key]=image
         for m in snapshot['modules']:
             if m['kind']=='freeze' and m['settings'].token and m['settings'].source!=pipeline.fingerprint:raise ValueError('Freeze source does not match current image')

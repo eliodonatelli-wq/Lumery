@@ -33,7 +33,7 @@ class NativeChainTests(unittest.TestCase):
   with self.assertRaises(Exception):self.p.compute_serial('linear',self.p.initial,False,[node()],4,e)
  def test_serialization(self):
   s=dict(state_index=1,ghs=self.p.initial,integrated=False,modules=[node()],divisor=4,format='FITS float32',path='',connections=[['input','native'],['native','output']])
-  data=json.loads(json.dumps(self.p.serial_project(s)));self.assertEqual(data['versions']['palette_native'],'1.2.2')
+  data=json.loads(json.dumps(self.p.serial_project(s)));self.assertEqual(data['versions']['palette_native'],'1.2.3')
   loaded=self.p.load_serial_project(data);self.assertEqual(loaded['modules'][0]['settings'],Settings())
   data['versions']['palette_native']='1.2.1'
   self.assertEqual(self.p.load_serial_project(data)['modules'][0]['settings'],Settings())

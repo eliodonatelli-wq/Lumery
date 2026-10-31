@@ -1,6 +1,21 @@
 # Lumerys Palette Studio Native — Private Plugin Beta
 
-Version: `0.10.0.beta1`
+Version: `0.10.0.beta2`
+
+## Beta 2 review fixes
+
+- External FITS have their own explicit linear/non-linear declaration. Foraxx
+  requires already stretched FITS and confirmation in Palette Studio. Upstream
+  GHS processes the chain image only; it does not stretch external channel files.
+  Older projects load with this confirmation disabled by default.
+- Freeze projects reopen when a monochrome source was composed into RGB.
+  Changed, missing, or cleared upstream FITS are flagged as stale while pinned
+  pixels remain usable without recomputing the upstream chain.
+- Compressor automatic references refresh when upstream FITS content changes.
+- Foraxx synthetic SII retains values above one until shared normalization.
+  All six three-gas permutations reject an absent SII channel explicitly.
+- Development launchers use checkout sources; portable installs use the matching
+  bundled library. No host installation is changed by building this package.
 
 This is a Python script plugin for AstroSuite Pro (SASpro), not a standalone
 application. The same package is intended for macOS and Windows 11 x64.

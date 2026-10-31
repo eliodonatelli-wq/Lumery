@@ -192,7 +192,9 @@ class Pipeline:
                         scale=(self.source.shape[0]/current.shape[0],self.source.shape[1]/current.shape[1])
                         output,_=spatial.process(current,module['settings'],scale,engine)
                     elif module['kind']=='palette_native':
-                        if module['settings'].requires_nonlinear() and current_state!='nonlinear':
+                        if module['settings'].requires_nonlinear() and not module['settings'].input_is_nonlinear(current_state):
+                            if module['settings'].source=='fits_channels':
+                                raise ValueError('Foraxx requires already stretched FITS channels. Upstream GHS does not process external files; confirm non-linear FITS in Palette Studio.')
                             raise ValueError('Foraxx requires non-linear data. Add an active Adaptive GHS module before Palette Studio, or select a classic gas mapping.')
                         prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True),native_input_signature(m['settings']) if m['kind']=='palette_native' and not m['bypass'] else ()) for m in modules[:index])
                         native_key=(state,input_settings if integrated_ghs else None,integrated_ghs,prefix,module['settings'],external_signature)
@@ -208,6 +210,7 @@ class Pipeline:
                                 self.native_palette_cache.popitem(last=False)
                         else:_,rgb,diagnostic=prepared
                         output=reduce_image(rgb,divisor)
+                        if module['settings'].source=='fits_channels':next_state='nonlinear' if module['settings'].fits_nonlinear else 'linear'
                         if module['settings'].nonlinear():next_state='nonlinear'
                         diagnostic=dict(diagnostic,native_shape=list(rgb.shape),external_inputs=external_signature)
                         note='Palette Studio · native render; reduced RGB preview. '+('Artificial SII.' if module['settings'].synthetic else 'RGB gas estimates.' if module['settings'].source=='rgb_estimate' else 'Registered FITS channels; alignment confirmed by user.')
@@ -251,7 +254,7 @@ class Pipeline:
                     elif module['kind']=='compressor':
                         settings=module['settings'];reference=settings.reference
                         if module.get('auto_reference',True):
-                            prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True)) for m in modules[:index])
+                            prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True),native_input_signature(m['settings']) if m['kind']=='palette_native' and not m['bypass'] else ()) for m in modules[:index])
                             reference_key=(state,input_settings if integrated_ghs else None,integrated_ghs,prefix)
                             prepared=self.compressor_references.get(module['id'])
                             if prepared is None or prepared[0]!=reference_key:

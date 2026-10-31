@@ -1,7 +1,7 @@
-"""Safe AstroSuite discovery entrypoint. Runtime library stays inside ZIP."""
+"""AstroSuite entrypoint for source checkouts and portable ZIP installs."""
 SCRIPT_NAME = 'Lumerys · Palette Native DEV'
 SCRIPT_GROUP = 'Enhancement'
-SCRIPT_VERSION = '0.10.0.beta1'
+SCRIPT_VERSION = '0.10.0.beta2'
 SCRIPT_DESCRIPTION = 'Serial node editor with suggested OSC/RGB, narrowband, and Foraxx starting workflows.'
 
 def run(ctx):
@@ -9,7 +9,8 @@ def run(ctx):
     from pathlib import Path
     root = Path(__file__).resolve().parent
     library = root / '_astrochain_lib.zip'
-    location = str(library if library.exists() else root)
+    # A development checkout owns its source package; portable installs use ZIP.
+    location = str(root if (root / 'astrochain' / '__init__.py').is_file() else library)
     if location in sys.path:
         sys.path.remove(location)
     sys.path.insert(0, location)
