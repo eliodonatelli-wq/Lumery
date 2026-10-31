@@ -15,7 +15,7 @@ from .curves import CurveSettings
 from .curve_editor import CurveEditor
 from .english_ui import OutputCurveEditor,english_message
 from .curve_preview import CurvePreview as ImagePreview
-from .vendor.ghs.theme import STYLE
+from .instrument_style import STYLE, InstrumentDialog, MetalPanel, ContentComboBox
 from .panels import keep_in_front
 from .slider_spacing import compact_sliders
 from .node_canvas import MODULE_CATALOG
@@ -93,13 +93,13 @@ class FreezeJob(QRunnable):
         super().__init__();self.pipeline=pipeline;self.s=snapshot;self.key=key;self.events=events;self.cancel=cancel
     def run(self):
         try:
-            self.events.progress.emit('Freeze · calcolo a piena risoluzione…')
-            settings=capture_freeze(self.pipeline,self.s['state'],self.s['ghs'],self.s['integrated'],self.s['modules'],self.key,self.cancel,self.events.progress.emit)
+            self.events.progress.emit('Freeze · calculating at full resolution…')
+            settings=capture_freeze(self.pipeline,self.s['state'],self.s['ghs'],self.s['integrated'],self.s['modules'],self.key,self.cancel,lambda text:self.events.progress.emit(english_message(text)))
             result=dict(settings=settings)
         except Cancelled:result=dict(cancelled=True)
         except Exception as exc:
             self.events.diagnostic.emit(format_error(exc, 'freeze'))
-            result=dict(error=str(exc))
+            result=dict(error=english_message(str(exc)))
         self.events.done.emit(result)
 
 class DisplayJob(QRunnable):
@@ -115,7 +115,7 @@ class DisplayJob(QRunnable):
             result['error']=english_message(str(exc))
         self.events.done.emit(result)
 
-class Editor(QDialog):
+class Editor(InstrumentDialog):
     def __init__(self, owner, kind, settings, title):
         super().__init__(owner, Qt.WindowType.Tool)
         self.owner=owner;self.kind=kind;self.controls={}
@@ -165,7 +165,7 @@ class Editor(QDialog):
         # Native source for INPUT. For downstream modules obtain their true native ingress in a worker.
         self.owner.request_auto(self)
 
-class ChainDialog(QDialog):
+class ChainDialog(InstrumentDialog):
     def __init__(self,source,metadata=None,ctx=None):
         super().__init__()
         self.setLocale(QLocale(QLocale.Language.English,QLocale.Country.UnitedStates))
@@ -177,16 +177,16 @@ class ChainDialog(QDialog):
         self.cancel_token=threading.Event()
         self.timer=QTimer(self);self.timer.setSingleShot(True);self.timer.setInterval(150);self.timer.timeout.connect(self.launch_preview)
         self.setWindowTitle('Lumerys · '+__import__(__package__,fromlist=['__version__']).__version__);self.resize(1280,800)
-        self.setStyleSheet(STYLE+'QScrollArea, QScrollArea > QWidget > QWidget { background:#18212e; } QLineEdit { background:#101925; padding:4px; } QWidget#PreviewPanel { background:#0c1320; border:1px solid #25334a; border-radius:8px; }')
+        self.setStyleSheet(STYLE)
         outer=QVBoxLayout(self)
-        outer.addWidget(QLabel('<span style="font-size:19px;font-weight:600;color:#73dccc">LUMERYS</span>'))
+        outer.addWidget(QLabel('<span style="font-size:19px;font-weight:600;color:#7ce9e9">LUMERYS</span>'))
         split=QSplitter();outer.addWidget(split,1)
-        self.preview_panel=QWidget();self.preview_panel.setObjectName('PreviewPanel')
+        self.preview_panel=MetalPanel();self.preview_panel.setObjectName('PreviewPanel')
         preview_layout=QVBoxLayout(self.preview_panel);preview_layout.setContentsMargins(8,8,8,8);preview_layout.setSpacing(6)
         heading=QLabel('PREVIEW');heading.setStyleSheet('color:#91a4bf;font-size:11px;font-weight:600;');preview_layout.addWidget(heading)
         self.view=ImagePreview();self.view.pixelPicked.connect(self.pick_curve_point);self.view.skyRegionPicked.connect(self.pick_sky_region);preview_layout.addWidget(self.view,1);split.addWidget(self.preview_panel)
         from .node_canvas import NodeCanvas
-        right=QWidget();rl=QVBoxLayout(right);rl.setContentsMargins(0,0,0,0)
+        right=MetalPanel('footer');rl=QVBoxLayout(right);rl.setContentsMargins(5,5,5,5)
         self.canvas=NodeCanvas(self.open_inspector,on_add=self.add_module,on_change=self.graph_changed,on_remove=self.remove_module,on_bypass=self.toggle_node_bypass);rl.addWidget(self.canvas)
         legend=QLabel('<span style="color:#58c9b5">● Linear</span> &nbsp; <span style="color:#72aaff">● Both</span><br><span style="color:#e7b565">● Non-linear</span> &nbsp; <span style="color:#f1767c">● Incompatible</span>');legend.setWordWrap(True);legend.setStyleSheet('font-size:11px;padding:4px;');rl.addWidget(legend)
         self.workflow_box=QGroupBox('Suggested starting workflow')
@@ -208,18 +208,18 @@ class ChainDialog(QDialog):
         for title,fn in [('INPUT',lambda:self.open_inspector('input')),('+ Module',self.add_menu),('OUTPUT',lambda:self.open_inspector('output'))]:
             button=QPushButton(title);button.clicked.connect(fn);tools.addWidget(button)
         rl.addLayout(tools);split.addWidget(right);split.setSizes([900,360]);split.setStretchFactor(0,7);split.setStretchFactor(1,3)
-        self.input_editor=QDialog(self,Qt.WindowType.Tool);self.input_editor.setWindowTitle('INPUT · original image');self.input_editor.resize(430,190)
+        self.input_editor=InstrumentDialog(self,Qt.WindowType.Tool);self.input_editor.setWindowTitle('INPUT · original image');self.input_editor.resize(430,190)
         input_form=QFormLayout(self.input_editor)
-        self.state=QComboBox();self.state.addItems(['Automatic · confirmation required','Linear','Already non-linear'])
+        self.state=ContentComboBox();self.state.addItems(['Automatic · confirmation required','Linear','Already non-linear'])
         self.state_note=QLabel();self.state_note.setWordWrap(True)
         input_form.addRow('Data state',self.state);input_form.addRow(self.state_note)
         hint=QLabel('INPUT preserves the pixels. Preview Auto GHS affects only the display. Add an Adaptive GHS node to stretch the data.');hint.setWordWrap(True);input_form.addRow(hint)
         self.state.currentIndexChanged.connect(self.state_changed)
-        statebar=QHBoxLayout();statebar.addWidget(QLabel('INPUT state'));self.main_state=QComboBox();self.main_state.addItems(['Automatic · confirmation required','Linear','Already non-linear']);statebar.addWidget(self.main_state,1)
+        state_panel=MetalPanel('footer');statebar=QHBoxLayout(state_panel);statebar.setContentsMargins(8,5,8,5);statebar.addWidget(QLabel('INPUT state'));self.main_state=ContentComboBox();self.main_state.addItems(['Automatic · confirmation required','Linear','Already non-linear']);statebar.addWidget(self.main_state);statebar.addStretch(1)
         self.main_state.currentIndexChanged.connect(self.state.setCurrentIndex)
         self.state.currentIndexChanged.connect(self.main_state.setCurrentIndex)
-        preview_layout.insertLayout(1,statebar)
-        self.output_editor=QDialog(self,Qt.WindowType.Tool);self.output_editor.setWindowTitle('OUTPUT');self.output_editor.resize(410,360)
+        preview_layout.insertWidget(1,state_panel)
+        self.output_editor=InstrumentDialog(self,Qt.WindowType.Tool);self.output_editor.setWindowTitle('OUTPUT');self.output_editor.resize(410,360)
         of=QFormLayout(self.output_editor)
         self.format=QComboBox(self.output_editor);self.format.addItems(['Documento AstroSuite','FITS float32','FITS float64']);self.format.hide()
         self.file_format=QComboBox();self.file_format.addItems(['FITS float32','FITS float64']);of.addRow('File format · export only',self.file_format)
@@ -235,17 +235,19 @@ class ChainDialog(QDialog):
         self.export_button=QPushButton('EXPORT FITS → disk…');self.export_button.clicked.connect(self.export_fits);of.addRow(self.export_button)
         for title,fn in [('Save project…',self.save_project),('Open project…',self.load_project)]:
             button=QPushButton(title);button.clicked.connect(fn);of.addRow(button)
-        bar=QHBoxLayout();preview_layout.addLayout(bar)
-        self.resolution=QComboBox();self.resolution.addItems(['Full','1/2','1/4','1/8']);self.resolution.setCurrentIndex(2);self.resolution.currentIndexChanged.connect(self.schedule)
-        self.point=QComboBox();self.point.addItem('OUTPUT','output');self.point.addItem('INPUT','input');self.point.addItem('Original','original');self.point.currentIndexChanged.connect(self.schedule)
+        footer=MetalPanel('footer');footer_layout=QVBoxLayout(footer);footer_layout.setContentsMargins(8,7,8,7);footer_layout.setSpacing(6);preview_layout.addWidget(footer)
+        bar=QHBoxLayout();footer_layout.addLayout(bar)
+        self.resolution=ContentComboBox();self.resolution.addItems(['Full','1/2','1/4','1/8']);self.resolution.setCurrentIndex(2);self.resolution.currentIndexChanged.connect(self.schedule)
+        self.point=ContentComboBox();self.point.addItem('OUTPUT','output');self.point.addItem('INPUT','input');self.point.addItem('Original','original');self.point.currentIndexChanged.connect(self.schedule)
         self.clipping=QCheckBox('Display clipping');self.clipping.toggled.connect(self.show_result)
         self.cancel_button=QPushButton('Cancel');self.cancel_button.clicked.connect(self.cancel);self.cancel_button.setEnabled(False)
         for widget in (QLabel('Resolution'),self.resolution,self.point,self.clipping):bar.addWidget(widget)
-        image_tools=QHBoxLayout();preview_layout.addLayout(image_tools);image_tools.addWidget(self.cancel_button)
+        bar.addStretch(1)
+        image_tools=QHBoxLayout();footer_layout.addLayout(image_tools);image_tools.addWidget(self.cancel_button)
         self.display_auto=QCheckBox('Auto GHS · preview only');self.display_auto.setChecked(True);self.display_auto.toggled.connect(self.request_display);image_tools.addWidget(self.display_auto);image_tools.addStretch(1)
         for title,fn in [('Fit',self.view.fit),('1:1',self.view.native)]:
             button=QPushButton(title);button.clicked.connect(fn);image_tools.addWidget(button)
-        self.status=QLabel();self.status.setWordWrap(True);self.status.setStyleSheet('color:#9aaec8;font-size:11px;');preview_layout.addWidget(self.status)
+        self.status=QLabel();self.status.setWordWrap(True);self.status.setStyleSheet('color:#9aaec8;font-size:11px;');footer_layout.addWidget(self.status)
         self.view.show_image(self.pipeline.source[::4,::4],self.pipeline.source.shape)
         keep_in_front(self.input_editor);keep_in_front(self.output_editor)
         self.loading=False
@@ -414,18 +416,18 @@ class ChainDialog(QDialog):
     def request_freeze(self,editor):
         if self.busy:
             if self.active_freeze==editor.key:
-                editor.set_phase('CATTURA','Cattura a piena risoluzione in corso…');return
+                editor.set_phase('CAPTURING','Capturing at full resolution…');return
             if editor.key not in self.freeze_queue:self.freeze_queue.append(editor.key)
-            editor.set_phase('IN CODA','Richiesta registrata · Congela partirà al termine del calcolo in corso.')
-            self.status.setText('Freeze in coda: attendi il completamento della cattura.');return
+            editor.set_phase('QUEUED','Request queued · Freeze will start when the current calculation finishes.')
+            self.status.setText('Freeze queued: wait for the capture to finish.');return
         if self.resolved_state()=='unknown':self.open_inspector('input');return
         try:
             snapshot=self.snapshot(require_output=False)
-            if not any(m['id']==editor.key for m in snapshot['modules']):raise ValueError('Collega Freeze a INPUT prima di congelare.')
+            if not any(m['id']==editor.key for m in snapshot['modules']):raise ValueError('Connect Freeze to INPUT before capturing.')
         except ValueError as exc:
             self.status.setText(str(exc));editor.set_phase('LIVE',str(exc));return
         self.timer.stop();self.pending=False;self.busy=True;self.active_freeze=editor.key;self.cancel_token=threading.Event()
-        generation=editor.capture_generation;editor.set_phase('CATTURA','Cattura a piena risoluzione in corso…')
+        generation=editor.capture_generation;editor.set_phase('CAPTURING','Capturing at full resolution…')
         self.cancel_button.setEnabled(True);self.render_button.setEnabled(False);self.export_button.setEnabled(False)
         events=Events(self);self.freeze_events=events;events.progress.connect(self.status.setText)
         def finished(result):
@@ -433,13 +435,13 @@ class ChainDialog(QDialog):
             present=self.editors.get(editor.key) is editor
             if present:
                 if result.get('error'):
-                    editor.restore(editor.settings());editor.status.setText('Cattura non riuscita: '+result['error']);self.status.setText('Freeze: '+result['error'])
+                    editor.restore(editor.settings());editor.status.setText('Capture failed: '+result['error']);self.status.setText('Freeze: '+result['error'])
                 elif result.get('cancelled') or generation!=editor.capture_generation:
-                    editor.restore(editor.settings());self.status.setText('Freeze annullato · cattura precedente conservata.')
+                    editor.restore(editor.settings());self.status.setText('Freeze cancelled · previous capture retained.')
                 else:
                     editor.restore(result['settings']);editor.bypass.setChecked(False)
                     self.point.setCurrentIndex(self.point.findData('output'))
-                    self.status.setText('Freeze completato · FROZEN · anteprima OUTPUT.')
+                    self.status.setText('Freeze complete · FROZEN · OUTPUT preview.')
             self.release_unused_freezes()
             if not self.launch_pending_freeze():self.schedule()
         events.done.connect(finished)

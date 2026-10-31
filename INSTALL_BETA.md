@@ -1,6 +1,13 @@
-# Lumerys Palette Studio Native — Private Plugin Beta
+# Lumerys — Instrument UI Development Preview
 
-Version: `0.10.0.beta2`
+Version: `0.10.0.ui3`
+
+This revision completes the approved instrument interface across every module
+inspector, including reused vendor controls, tabs, numeric tooltips and Freeze
+messages. All Lumerys-owned captions are English. Parameter identifiers and
+saved project values remain unchanged. No image engine or preview-processing
+change is included. Native operating-system file dialogs follow the OS language.
+Offscreen checks do not certify every live host workflow or Windows appearance.
 
 ## Beta 2 review fixes
 
@@ -34,7 +41,7 @@ The script API must provide get_image(), active_document(), and
 open_new_document(). A minimum supported SASpro release is not yet established;
 include your SASpro version in beta feedback.
 
-## Installation — macOS and Windows 11
+## Installation — macOS and Windows
 
 1. Close any open Lumerys panel in AstroSuite Pro.
 2. Extract the outer beta ZIP. Keep the launcher and `_astrochain_lib.zip`
@@ -46,7 +53,7 @@ include your SASpro version in beta feedback.
 5. Choose **Scripts → Reload Scripts**. If the new version is not picked up,
    restart AstroSuite Pro. Avoid opening multiple Lumerys versions together.
 6. Open and select an image, then choose **Lumerys · Palette Native DEV** in the
-   Enhancement script group. This beta retains the existing menu name.
+   Enhancement script group. The existing discovery name is retained to avoid duplicate menu entries.
 
 The usual script locations are:
 

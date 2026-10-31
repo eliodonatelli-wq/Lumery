@@ -18,7 +18,7 @@ class QueueTests(unittest.TestCase):
  def test_congela_during_preview_is_queued_and_runs_once(self):
   with patch.object(ui,'capture_freeze',wraps=ui.capture_freeze) as capture:
    self.d.start(False);self.assertTrue(self.d.busy);self.d.request_freeze(self.e);self.d.request_freeze(self.e)
-   self.assertEqual(self.d.freeze_queue,[self.f.key]);self.assertIn('registrata',self.e.status.text());self.assertEqual(self.f.freeze_label,'IN CODA')
+   self.assertEqual(self.d.freeze_queue,[self.f.key]);self.assertIn('queued',self.e.status.text());self.assertEqual(self.f.freeze_label,'QUEUED')
    self.wait();self.assertEqual(capture.call_count,1)
   self.assertTrue(self.e.settings().token);self.assertTrue(self.f.freeze_label.startswith('FROZEN'));self.assertIsNotNone(self.d.displayed['freeze_index'])
  def test_captured_preview_then_changing_resolution_skips_palette(self):

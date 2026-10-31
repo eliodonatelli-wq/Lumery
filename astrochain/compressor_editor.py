@@ -1,4 +1,5 @@
 """Compact inspector reusing the original compressor Fader/BandPanel unchanged."""
+from .instrument_style import InstrumentDialog
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QGridLayout,QWidget,QScrollArea,QLabel,QComboBox,QCheckBox,QLineEdit,QPushButton,QTabWidget,QFileDialog,QMessageBox)
 import json
@@ -9,7 +10,7 @@ import pyqtgraph as pg
 from .vendor.dynamics.ui import Fader,BandPanel,COLORS,spin
 from .vendor.dynamics.core import Settings,Band,transfer
 
-class CompressorEditor(QDialog):
+class CompressorEditor(InstrumentDialog):
     kind='compressor'
     def __init__(self,owner,settings,title):
         super().__init__(owner,Qt.WindowType.Tool)

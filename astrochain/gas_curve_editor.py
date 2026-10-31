@@ -1,6 +1,7 @@
 """Three independently editable signal curves, using the existing curve widget."""
 from PyQt6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QComboBox,QCheckBox,QPushButton,QLabel,QDoubleSpinBox,QDialog
 from .gas_curve_graph import GasCurveGraph
+from .instrument_style import InstrumentDialog,apply_inspector_style
 from .gas_curves import validate,NAMES
 from .tone_curve import IDENTITY
 class GasCurvePanel(QWidget):
@@ -36,8 +37,8 @@ class GasCurvePanel(QWidget):
         from PyQt6.QtGui import QImage,QPixmap
         data=np.ascontiguousarray(np.uint8(np.clip(self.mask,0,1)*255));h,w=data.shape
         image=QImage(data.data,w,h,data.strides[0],QImage.Format.Format_Grayscale8).copy()
-        self.mask_dialog=QDialog(self);layout=QVBoxLayout(self.mask_dialog);layout.addWidget(QLabel('White: correction applied · black: signal protected / uncertain sky'))
-        label=QLabel();label.setPixmap(QPixmap.fromImage(image));layout.addWidget(label);self.mask_dialog.setWindowTitle('Gas curves · correction mask');self.mask_dialog.show()
+        self.mask_dialog=InstrumentDialog(self);layout=QVBoxLayout(self.mask_dialog);layout.addWidget(QLabel('White: correction applied · black: signal protected / uncertain sky'))
+        label=QLabel();label.setPixmap(QPixmap.fromImage(image));layout.addWidget(label);self.mask_dialog.setWindowTitle('Gas curves · correction mask');apply_inspector_style(self.mask_dialog);self.mask_dialog.show()
     def zoom(self,enabled):self.graph.shadow_zoom=enabled;self.graph.update()
     def sync(self):
         i=self.graph.selected

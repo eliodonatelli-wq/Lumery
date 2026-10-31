@@ -1,24 +1,25 @@
 """Independent, movable checkpoint controls using the shared worker queue."""
+from .instrument_style import InstrumentDialog
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QCheckBox
 from .freeze import FreezeSettings
-class FreezeEditor(QDialog):
+class FreezeEditor(InstrumentDialog):
     kind='freeze'
     def __init__(self,owner,settings,title,key):
         super().__init__(owner,Qt.WindowType.Tool);self.owner=owner;self.key=key;self._settings=settings;self.capture_generation=0
         self.setWindowTitle(title);self.resize(470,270);root=QVBoxLayout(self)
-        self.bypass=QCheckBox('Bypass · usa la catena a monte');self.bypass.toggled.connect(owner.schedule);root.addWidget(self.bypass)
+        self.bypass=QCheckBox('Bypass · use the upstream chain');self.bypass.toggled.connect(owner.schedule);root.addWidget(self.bypass)
         self.status=QLabel();self.status.setWordWrap(True);root.addWidget(self.status)
         row=QHBoxLayout()
-        for label,slot in [('Congela',lambda:owner.request_freeze(self)),('Aggiorna',lambda:owner.request_freeze(self)),('Sblocca',self.unlock),('Duplica',self.duplicate)]:
+        for label,slot in [('Freeze',lambda:owner.request_freeze(self)),('Update',lambda:owner.request_freeze(self)),('Unlock',self.unlock),('Duplicate',self.duplicate)]:
             b=QPushButton(label);b.clicked.connect(slot);row.addWidget(b)
         root.addLayout(row)
-        note=QLabel('Cattura a piena risoluzione, senza stretch di visualizzazione. I nodi successivi partono dai pixel congelati. Le modifiche a monte restano escluse fino ad Aggiorna.\nPalette: verifica Full prima di congelare. Ogni copia è indipendente.');note.setWordWrap(True);root.addWidget(note)
-        close=QPushButton('Chiudi');close.clicked.connect(self.close);root.addWidget(close);self.restore(settings)
+        note=QLabel('Capture at full resolution, without display stretching. Downstream nodes start from the frozen pixels. Upstream changes remain excluded until Update.\nPalette: check Full before freezing. Each copy is independent.');note.setWordWrap(True);root.addWidget(note)
+        close=QPushButton('Close');close.clicked.connect(self.close);root.addWidget(close);self.restore(settings)
     def settings(self):return self._settings
     def restore(self,settings):
         self._settings=settings
-        self.status.setText('Congelato a piena risoluzione.' if settings.token else 'LIVE · immagine non congelata. Premi Congela per catturarla.')
+        self.status.setText('Frozen at full resolution.' if settings.token else 'LIVE · image is not frozen. Press Freeze to capture it.')
         for node in self.owner.canvas.modules:
             if node.key==self.key:node.freeze_label='FROZEN' if settings.token else 'LIVE';node.update()
         if settings.token:self.update_diagnostics({})
@@ -34,9 +35,9 @@ class FreezeEditor(QDialog):
     def update_diagnostics(self,diagnostic):
         if not self._settings.token:return
         image=self.owner.pipeline.freeze_frames.get(self._settings.token)
-        if image is None:self.status.setText('Pixel non disponibili · Aggiorna o Sblocca.');return
-        h,w=image.shape[:2];text=f'Congelato · {w} × {h} · {image.nbytes/1024**2:.1f} MiB · {self._settings.state}'
-        if diagnostic.get('stale'):text+='\nModifiche a monte escluse · premi Aggiorna per includerle.'
+        if image is None:self.status.setText('Frozen pixels unavailable · Update or Unlock.');return
+        h,w=image.shape[:2];text=f'Frozen · {w} × {h} · {image.nbytes/1024**2:.1f} MiB · {self._settings.state}'
+        if diagnostic.get('stale'):text+='\nUpstream changes excluded · press Update to include them.'
         self.status.setText(text)
         for node in self.owner.canvas.modules:
             if node.key==self.key:node.freeze_label='FROZEN*' if diagnostic.get('stale') else 'FROZEN';node.update()

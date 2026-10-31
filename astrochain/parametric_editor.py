@@ -1,6 +1,7 @@
 """Original parametric control layout and widgets, hosted by the chain."""
 import json
 from pathlib import Path
+from .instrument_style import InstrumentDialog
 from PyQt6.QtCore import Qt,QLocale
 from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QComboBox,QCheckBox,QDoubleSpinBox,QGroupBox,QWidget,QFileDialog,QMessageBox,QSlider,QScrollArea
 from .vendor.parametric.parameters import Settings,from_preset
@@ -8,7 +9,7 @@ from .vendor.parametric.theme import STYLE,COLORS
 from .vendor.parametric.widgets import BandPanel
 from .vendor.parametric.curve import ResponseCurve
 from .vendor.parametric.ui import EqualizerDialog
-class ParametricEditor(QDialog):
+class ParametricEditor(InstrumentDialog):
     kind='parametric'
     def __init__(self,owner,settings,title,key):
         super().__init__(owner,Qt.WindowType.Tool)

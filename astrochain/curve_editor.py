@@ -1,10 +1,11 @@
 """Curve controls sharing AstroChain's preview and scheduling."""
+from .instrument_style import InstrumentDialog
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QComboBox,QLabel,QCheckBox,QDoubleSpinBox,QPushButton
 from .curve_graph import CurveGraph,COLORS
 from .curves import CurveSettings,MODES
 from .tone_curve import IDENTITY,validate_points
-class CurveEditor(QDialog):
+class CurveEditor(InstrumentDialog):
     kind='curves'
     def __init__(self,owner,settings,title):
         super().__init__(owner,Qt.WindowType.Tool)

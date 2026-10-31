@@ -34,7 +34,7 @@ class InsertTests(unittest.TestCase):
   self.d.show();self.app.processEvents();canvas=self.d.canvas;cable=next(c for c in canvas.cables if c.edge==(self.a.key,self.b.key));point=canvas.mapFromScene(cable.path().pointAtPercent(.5))
   event=QContextMenuEvent(QContextMenuEvent.Reason.Mouse,point,canvas.viewport().mapToGlobal(point))
   def choose(menu,*args):
-   submenu=next(a.menu() for a in menu.actions() if a.text()=='Inserisci modulo qui')
+   submenu=next(a.menu() for a in menu.actions() if a.text()=='Insert module here')
    action=next(a for a in submenu.actions() if a.text().startswith('Freeze'));action.trigger()
   with patch.object(QMenu,'exec',choose):canvas.contextMenuEvent(event)
   self.d.timer.stop();self.assertEqual([m['kind'] for m in self.d.snapshot()['modules']],['curves','freeze','eq'])

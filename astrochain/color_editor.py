@@ -1,10 +1,11 @@
 """Original Color Mixer & Tone 12.4 controls; chain owns image and exports."""
 import json
+from .instrument_style import InstrumentDialog
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QComboBox,QCheckBox,QGroupBox,QScrollArea,QWidget,QTabWidget
 from .vendor.nebula.mixer import ColorGroup,ToneGroup,SliderRow,COLOR_RANGES,COLOR_NAMES,SLIDER_COLORS,DEFAULT_PRESETS,STUDIO_STYLE,ColorMixerToneDialog
 from .nebula_settings import ColorSettings,canonical
-class ColorEditor(QDialog):
+class ColorEditor(InstrumentDialog):
     kind='colors'
     def __init__(self,owner,settings,title):
         super().__init__(owner,Qt.WindowType.Tool);self.owner=owner

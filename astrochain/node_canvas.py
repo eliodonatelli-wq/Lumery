@@ -1,6 +1,7 @@
 """Serial node editor. Every graph edit updates the processing chain."""
 from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer
 from PyQt6.QtGui import QColor, QPen, QBrush, QFont, QPainter, QPainterPath, QLinearGradient
+from .instrument_style import paint_metal, draw_module_icon
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QMenu, QGraphicsRectItem, QGraphicsItem, QGraphicsObject, QGraphicsPathItem
 
 MODULE_CATALOG=(('palette_native','Palette Studio'),('ghs','Adaptive GHS Stretch'),('eq','Spatial Equalizer'),('compressor','Multiband Compressor'),('parametric','Astro Parametric Equalizer'),('filament','Nebula Filament Enhancer'),('colors','Nebula Colors & Tone'),('curves','Curves'),('freeze','Freeze · native checkpoint'))
@@ -36,10 +37,10 @@ class BypassButton(QGraphicsObject):
     def boundingRect(self):return QRectF(0,0,78,22)
     def paint(self,painter,option,widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor('#d49a38' if self.checked else '#40516c')))
-        painter.setBrush(QColor('#48371d' if self.checked else '#111b2c'))
-        painter.drawRoundedRect(self.boundingRect(),6,6)
-        painter.setPen(QColor('#f3c86b' if self.checked else '#9aaac3'));painter.setFont(QFont('Arial',9,QFont.Weight.DemiBold))
+        paint_metal(painter,self.boundingRect(),'footer',3)
+        painter.setPen(QPen(QColor('#d49a38' if self.checked else '#65777d'),.8))
+        painter.setBrush(Qt.BrushStyle.NoBrush);painter.drawRoundedRect(self.boundingRect().adjusted(.5,.5,-.5,-.5),3,3)
+        painter.setPen(QColor('#f3c86b' if self.checked else '#c2d2d7'));painter.setFont(QFont('Arial',9,QFont.Weight.DemiBold))
         painter.drawText(self.boundingRect(),Qt.AlignmentFlag.AlignCenter,'BYPASS')
     def mousePressEvent(self,event):event.accept()
     def mouseReleaseEvent(self,event):
@@ -77,25 +78,18 @@ class Node(QGraphicsRectItem):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self.bypassed:painter.setOpacity(.55)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0,0,0,55));painter.drawRoundedRect(QRectF(0,4,270,76),12,12)
-        painter.setBrush(QColor('#192436'))
-        painter.setPen(QPen(QColor('#f1767c' if self.compatibility=='invalid' else self.accent if self.isSelected() or self.hovered else '#31415a'),1.5))
-        painter.drawRoundedRect(self.rect(),12,12)
-        painter.setPen(Qt.PenStyle.NoPen);painter.setBrush(QColor(self.accent));painter.drawRoundedRect(QRectF(0,18,3,40),1.5,1.5)
-        tint=QColor(self.accent);tint.setAlpha(22);painter.setBrush(tint);painter.drawRoundedRect(QRectF(15,20,36,36),9,9)
-        painter.setPen(QPen(QColor(self.accent),2))
-        if not self.permanent:
-            for x,h in [(25,13),(33,21),(41,9)]:
-                painter.drawLine(QPointF(x,38-h/2),QPointF(x,38+h/2))
-                painter.drawLine(QPointF(x-3,38-h/4),QPointF(x+3,38-h/4))
-        else:
-            painter.drawRoundedRect(QRectF(25,30,16,15),3,3)
-            yy=34 if self.key=='input' else 41
-            painter.drawLine(QPointF(20,yy),QPointF(32,yy))
-        painter.setPen(QColor('#e1e8f3'));painter.setFont(QFont('Arial',14,QFont.Weight.DemiBold))
+        painter.setBrush(QColor(0,0,0,100));painter.drawRoundedRect(QRectF(1,3,270,76),5,5)
+        paint_metal(painter,self.rect(),'node',5)
+        edge='#f1767c' if self.compatibility=='invalid' else self.accent if self.isSelected() or self.hovered else '#798b91'
+        painter.setPen(QPen(QColor(edge),1.1));painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(self.rect().adjusted(.6,.6,-.6,-.6),5,5)
+        painter.setPen(Qt.PenStyle.NoPen);painter.setBrush(QColor(self.accent));painter.drawRoundedRect(QRectF(1.5,9,3,58),1.5,1.5)
+        paint_metal(painter,QRectF(13,17,40,42),'well',4)
+        draw_module_icon(painter,self.key if self.permanent else self.kind,self.accent)
+        painter.setPen(QColor('#e1e8f3'));painter.setFont(QFont('Arial',11,QFont.Weight.DemiBold))
         name='INPUT' if self.key=='input' else 'OUTPUT' if self.key=='output' else 'Palette Studio' if self.kind=='palette_native' else 'Adaptive GHS' if self.kind=='ghs' else 'Compressor' if self.kind=='compressor' else 'Parametric EQ' if self.kind=='parametric' else 'Nebula Filament' if self.kind=='filament' else 'Nebula Palette' if self.kind=='palette' else 'Nebula Colors' if self.kind=='colors' else 'Freeze' if self.kind=='freeze' else 'Curves' if self.kind=='curves' else 'Spatial Equalizer'
         painter.drawText(QRectF(64,17,192,23),name)
-        painter.setFont(QFont('Arial',11));painter.setPen(QColor('#94a4bb'))
+        painter.setFont(QFont('Arial',9));painter.setPen(QColor('#adbdc5'))
         subtitle='Original data · no stretch' if self.key=='input' else 'Rendering and export' if self.key=='output' else ({'linear':'Linear','nonlinear':'Non-linear','either':'Both'}[self.requirement]+' · '+str(self.serial).zfill(2))
         if self.kind=='freeze':subtitle=self.freeze_label+' · '+str(self.serial).zfill(2)
         painter.drawText(QRectF(64,43,190 if self.permanent else 110,20),subtitle)
@@ -241,11 +235,7 @@ class NodeCanvas(QGraphicsView):
         self.update_cables()
         if self.on_change:self.on_change()
     def drawBackground(self,painter,rect):
-        painter.fillRect(rect,QColor('#0d1421'))
-        painter.setPen(QPen(QColor('#1c293a'),1))
-        for x in range(int(rect.left())//22*22,int(rect.right())+22,22):
-            for y in range(int(rect.top())//22*22,int(rect.bottom())+22,22):
-                painter.drawPoint(QPointF(x,y))
+        paint_metal(painter,rect.united(self.sceneRect()),'well',0,False)
     def expand_scene(self):
         bounds=self.scene().itemsBoundingRect()
         if not self.sceneRect().contains(bounds):self.scene().setSceneRect(self.sceneRect().united(bounds.adjusted(-40,-40,40,40)))
@@ -287,7 +277,7 @@ class NodeCanvas(QGraphicsView):
     def contextMenuEvent(self,event):
         cable=next((item for item in self.items(event.pos()) if isinstance(item,Cable)),None)
         if cable:
-            menu=QMenu(self);insert=menu.addMenu('Inserisci modulo qui')
+            menu=QMenu(self);insert=menu.addMenu('Insert module here')
             edge=cable.edge;point=self.mapToScene(event.pos())
             for kind,title in MODULE_CATALOG:
                 insert.addAction(title,lambda checked=False,k=kind,e=edge,p=point:self.insert_module(k,e,p))

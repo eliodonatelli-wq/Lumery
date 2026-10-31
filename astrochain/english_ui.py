@@ -50,3 +50,37 @@ def english_message(text):
     ):
         text=text.replace(original,english)
     return text
+
+
+# Presentation-only tooltip translation for reused vendor controls. Do not
+# rename combo items, preset keys, parameter IDs or serialized enum values.
+def english_tooltip(text):
+    text = text.replace('Intervallo del cursore: ', 'Slider range: ')
+    text = text.replace('Valore completo: ', 'Full value: ')
+    text = text.replace('Clic per modificare con tutta la precisione.',
+                        'Click to edit with full precision.')
+    text = text.replace('Attivo: cursore fine attorno al valore corrente. Disattivo: intervallo completo. Il campo numerico accetta sempre ogni valore; fuori intervallo ricentra il cursore. Disattiva e riattiva Fine per ricentrarlo manualmente.',
+                        'On: fine slider range around the current value. Off: full range. The numeric field accepts the full range and recenters the slider when needed. Toggle Fine off and on to recenter manually.')
+    return english_message(text)
+
+
+def install_tooltip_translation(panel):
+    from PyQt6.QtCore import QObject, QEvent
+    from PyQt6.QtWidgets import QWidget
+    if hasattr(panel, '_english_tooltip_guard'):
+        return
+    class TooltipGuard(QObject):
+        def eventFilter(self, watched, event):
+            if event.type() == QEvent.Type.ToolTipChange:
+                original = watched.toolTip()
+                translated = english_tooltip(original)
+                if translated != original:
+                    watched.setToolTip(translated)
+            return False
+    guard = TooltipGuard(panel)
+    panel._english_tooltip_guard = guard
+    for widget in [panel] + panel.findChildren(QWidget):
+        widget.installEventFilter(guard)
+        translated = english_tooltip(widget.toolTip())
+        if translated != widget.toolTip():
+            widget.setToolTip(translated)

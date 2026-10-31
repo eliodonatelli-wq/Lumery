@@ -1,9 +1,10 @@
 """B6 original parameter controls, adapted to a shared chain preview."""
+from .instrument_style import InstrumentDialog
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QSlider,QSpinBox,QCheckBox,QComboBox,QScrollArea
 from .filament_settings import FilamentSettings
 from .vendor.filament.ui import TrialDialog
-class FilamentEditor(QDialog):
+class FilamentEditor(InstrumentDialog):
     kind='filament'
     def __init__(self,owner,settings,title):
         super().__init__(owner,Qt.WindowType.Tool)

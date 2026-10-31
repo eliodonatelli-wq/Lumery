@@ -2,6 +2,7 @@
 import json
 from types import SimpleNamespace
 import numpy as np
+from .instrument_style import InstrumentDialog
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QCheckBox,QComboBox,QDoubleSpinBox,QFormLayout,QTabWidget,QFileDialog,QMessageBox,QGroupBox,QScrollArea
 from .vendor.nebula import palette
@@ -42,7 +43,7 @@ class PalettePanel(palette.StudioDialog):
     def _refresh_preview(self,*args):self._schedule()
     def _record_history(self):pass
 
-class NebulaEditor(QDialog):
+class NebulaEditor(InstrumentDialog):
     kind='palette'
     def __init__(self,owner,settings,title):
         super().__init__(owner,Qt.WindowType.Tool)
@@ -73,7 +74,7 @@ class NebulaEditor(QDialog):
             button=QPushButton(text);button.clicked.connect(slot);row.addWidget(button)
         root.addLayout(row)
         self.sky_roi=None;self._sky_restoring=False;self._sky_presets={}
-        box=QGroupBox('Neutralizzazione fondo cielo');form=QVBoxLayout(box)
+        box=QGroupBox('Sky background neutralization');form=QVBoxLayout(box)
         sky_page=QScrollArea();sky_page.setWidgetResizable(True);sky_page.setWidget(box);tabs.addTab(sky_page,'Sky')
         self.sky_enabled=QCheckBox('Enable · preserve uncertain signal');form.addWidget(self.sky_enabled)
         self.sky_rows={}

@@ -25,6 +25,8 @@ class ForegroundGuard(QObject):
         if self.panel.isVisible() and self.owner.isVisible() and not self.owner.isMinimized():self.panel.raise_()
 
 def keep_in_front(panel):
+    from .instrument_style import apply_inspector_style
+    apply_inspector_style(panel)
     # Set before the native NSPanel is created. Topmost level alone does not
     # disable macOS hiding tool windows when the application deactivates.
     panel.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow,True)

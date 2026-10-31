@@ -1,5 +1,6 @@
 """Native inspector: shared scheduling, curve widget and common image preview."""
 from dataclasses import asdict
+from .instrument_style import InstrumentDialog
 from PyQt6.QtCore import Qt,pyqtSignal
 from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QTabWidget,QWidget,QLabel,QPushButton,QCheckBox,QComboBox,QSlider,QLineEdit,QFileDialog,QScrollArea
 from .palette_native import NativePaletteSettings,PALETTES,FORAXX
@@ -19,7 +20,7 @@ class NumericSlider(QWidget):
         self.readout=QLabel();self.readout.setMinimumWidth(92);self.readout.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
         row=QHBoxLayout(self);row.setContentsMargins(0,0,0,0);row.setSpacing(8);row.addWidget(self.slider,1);row.addWidget(self.readout)
         self.slider.valueChanged.connect(self._changed);self.slider.doubleClicked.connect(self.reset_default);self.setValue(initial)
-        self.slider.setToolTip(f'{self.low:g} – {self.high:g}' + (' · scala logaritmica' if logarithmic else ''))
+        self.slider.setToolTip(f'{self.low:g} – {self.high:g}' + (' · logarithmic scale' if logarithmic else ''))
     def value(self):
         t=self.t_low+(self.t_high-self.t_low)*self.slider.value()/self.STEPS
         return self.low*(self.high/self.low)**t if self.logarithmic else self.low+(self.high-self.low)*t
@@ -48,13 +49,13 @@ class ResettableSlider(QSlider):
     def mouseDoubleClickEvent(self,event):
         self.doubleClicked.emit();event.accept()
 
-class NativePaletteEditor(QDialog):
+class NativePaletteEditor(InstrumentDialog):
     kind='palette_native'
     def __init__(self,owner,settings,title):
         super().__init__(owner,Qt.WindowType.Tool);self.owner=owner;self.loading=True;self.controls={};self.curve_index=0
         self.setWindowTitle(title);self.resize(680,740);root=QVBoxLayout(self)
         self.bypass=QCheckBox('Bypass');self.bypass.toggled.connect(owner.schedule);root.addWidget(self.bypass)
-        self.fine_control=QCheckBox('Cursori fini · disattiva/riattiva per ricentrare');self.fine_control.setChecked(True);root.addWidget(self.fine_control)
+        self.fine_control=QCheckBox('Fine sliders · toggle off/on to recenter');self.fine_control.setChecked(True);root.addWidget(self.fine_control)
         tabs=QTabWidget();root.addWidget(tabs)
         def page(title):
             w=QWidget();f=QFormLayout(w);f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows);f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow);scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(w);tabs.addTab(scroll,title);return f
@@ -72,7 +73,7 @@ class NativePaletteEditor(QDialog):
         self.matrix_controls=self.spins(f,'matrix','Custom RGB matrix',9,-100,100)
         self.matrix_form=f;self.controls['custom_matrix'].toggled.connect(self.set_matrix_visible)
         self.controls['palette'].currentTextChanged.connect(lambda _:self.set_matrix_visible(self.controls['custom_matrix'].isChecked()))
-        palette_note=QLabel('Combinazioni: HOO, SHO, HSO, HOS, SOH, OSH, OHS. Foraxx usa le formule dinamiche PIP e richiede segnali non-lineari in [0,1]. Se curve o guadagni superano 1, applica una scala comune a tutti i canali usati, senza clipping indipendente; i valori negativi restano un errore esplicito.');palette_note.setWordWrap(True);f.addRow(palette_note)
+        palette_note=QLabel('Combinations: HOO, SHO, HSO, HOS, SOH, OSH, OHS. Foraxx uses dynamic PIP formulas and requires non-linear signals in [0,1]. Curves or gains above 1 trigger one common scale for all used channels, with no independent clipping. Negative values remain an explicit error.');palette_note.setWordWrap(True);f.addRow(palette_note)
         self.spins(f,'extraction','RGB extraction matrix (rows Hα,OIII,SII; columns R,G,B)',9,-100,100)
         f=page('Synthetic / range')
         self.check(f,'synthetic','Generate artificial SII (replaces SII input)')
@@ -83,17 +84,17 @@ class NativePaletteEditor(QDialog):
         f=page('Curves')
         self.curve_select=QComboBox();self.curve_select.addItems(['Gas Hα','Gas OIII','Gas SII','Output R','Output G','Output B']);f.addRow(self.curve_select)
         self.graph=CurveGraph();self.graph.setMinimumSize(400,300);f.addRow(self.graph)
-        n=QLabel('Monotone curves: click to add, drag to edit, right click to delete. Linear extrapolation outside the curve domain; no data clipping. With sky protection, gas curves operate on the sky residual. RGB curves always operate last.');n.setWordWrap(True);f.addRow(n)
+        n=QLabel('Monotone curves: click to add, drag to edit, right click to delete. Linear extrapolation outside the curve domain; no data clipping. Sky neutralization follows RGB composition. RGB curves always operate last.');n.setWordWrap(True);f.addRow(n)
         button=QPushButton('Reset selected curve');button.clicked.connect(lambda:self.graph.set_points(IDENTITY));f.addRow(button)
         self.curve_select.currentIndexChanged.connect(self.switch_curve);self.graph.changed.connect(self.changed)
         f=page('Sky protection')
-        self.check(f,'protect','Neutralizza il cielo dal rettangolo selezionato')
-        self.sky_pick=QPushButton('Seleziona rettangolo del fondo cielo');self.sky_pick.setCheckable(True);f.addRow(self.sky_pick)
-        self.sky_status=QLabel('Nessun rettangolo selezionato');self.sky_status.setObjectName('nativeSkyStatus');self.sky_status.setWordWrap(True);f.addRow(self.sky_status)
-        clear=QPushButton('Rimuovi rettangolo');clear.clicked.connect(lambda:self.set_sky_roi(()));f.addRow(clear)
-        self.spin(f,'protection','Intensità neutralizzazione',0,1)
-        self.check(f,'mask_view','Visualizza area corretta nell’anteprima condivisa')
-        n=QLabel('Seleziona un rettangolo su una zona di cielo vuota. La mediana RGB del rettangolo viene neutralizzata con una traslazione cromatica costante, così le differenze di segnale tra i pixel restano intatte.');n.setWordWrap(True);f.addRow(n)
+        self.check(f,'protect','Neutralize sky using the selected rectangle')
+        self.sky_pick=QPushButton('Select sky reference rectangle');self.sky_pick.setCheckable(True);f.addRow(self.sky_pick)
+        self.sky_status=QLabel('No sky rectangle selected');self.sky_status.setObjectName('nativeSkyStatus');self.sky_status.setWordWrap(True);f.addRow(self.sky_status)
+        clear=QPushButton('Clear rectangle');clear.clicked.connect(lambda:self.set_sky_roi(()));f.addRow(clear)
+        self.spin(f,'protection','Neutralization strength',0,1)
+        self.check(f,'mask_view','Show corrected area in the shared preview')
+        n=QLabel('Select a rectangle over empty sky. Its median RGB color is neutralized with a constant color translation, preserving signal differences between pixels.');n.setWordWrap(True);f.addRow(n)
         self.sky_pick.toggled.connect(lambda enabled:owner.arm_sky_picker(self,enabled))
         self.status=QLabel();self.status.setWordWrap(True);root.addWidget(self.status)
         row=QHBoxLayout()
@@ -138,7 +139,7 @@ class NativePaletteEditor(QDialog):
         if path:self.controls[k].setText(path);self.changed()
     def set_sky_roi(self,roi):
         self.sky_roi=tuple(roi) if roi else ()
-        self.sky_status.setText('Rettangolo fondo cielo selezionato' if self.sky_roi else 'Nessun rettangolo selezionato')
+        self.sky_status.setText('Sky reference rectangle selected' if self.sky_roi else 'No sky rectangle selected')
         if self.sky_pick.isChecked():self.sky_pick.setChecked(False)
         self.owner.view.set_sky_roi(None);self.owner.schedule()
     def changed(self,*args):
@@ -169,7 +170,7 @@ class NativePaletteEditor(QDialog):
             elif isinstance(c,QComboBox):c.setCurrentText(v)
             elif isinstance(c,QLineEdit):c.setText(v)
             else:c.setValue(v)
-        self.sky_roi=tuple(s.sky_roi);self.sky_status.setText('Rettangolo fondo cielo selezionato' if self.sky_roi else 'Nessun rettangolo selezionato')
+        self.sky_roi=tuple(s.sky_roi);self.sky_status.setText('Sky reference rectangle selected' if self.sky_roi else 'No sky rectangle selected')
         self.graph.set_points(self.curves[self.curve_index],emit=False);self.loading=False
     def reset(self):self.restore(NativePaletteSettings());self.bypass.setChecked(False);self.owner.view.set_sky_roi(None);self.owner.schedule()
     def update_diagnostics(self,d):

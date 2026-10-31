@@ -101,4 +101,4 @@ class FreezeUiTests(unittest.TestCase):
    with patch.object(QFileDialog,'getOpenFileName',return_value=(path,'')):self.d.load_project()
    self.d.timer.stop();self.assertIn(token,self.d.pipeline.freeze_frames);self.assertEqual(self.d.editors[self.f.key].settings().token,token)
  def test_unconnected_freeze_does_not_capture_other_path(self):
-  e=self.d.editors[self.f.key];self.d.canvas.disconnect((self.c.key,self.f.key));self.d.timer.stop();self.d.request_freeze(e);self.assertFalse(e.settings().token);self.assertIn('Collega',self.d.status.text())
+  e=self.d.editors[self.f.key];self.d.canvas.disconnect((self.c.key,self.f.key));self.d.timer.stop();self.d.request_freeze(e);self.assertFalse(e.settings().token);self.assertIn('Connect',self.d.status.text())

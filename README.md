@@ -1,10 +1,15 @@
-# Lumerys · Palette Studio Native — 0.10.0.beta2
+# Lumerys · Instrument UI Development Preview — 0.10.0.ui3
+
+This development worktree contains the approved brushed-metal instrument interface
+and its completion across all module inspectors. See [UI_REVIEW.md](UI_REVIEW.md)
+for the visual scope, checks and remaining host validation. The processing
+engines and image preview path remain unchanged from beta 2.
 
 Isolated development version. The new **Palette Studio** node is a module in the
 Lumerys chain. The old **Nebula Palette** node is no longer available for
 new insertions; it can still be loaded from saved projects for compatibility.
-The local development build is installed in the dedicated `lumerys_palette_native_dev` folder;
-the standalone AstroSuite plugins remain unchanged.
+The instrument UI uses the existing `lumerys_palette_native_dev` installation;
+the previous version is retained for recovery and standalone plugins stay separate.
 
 ## Getting started
 
@@ -124,6 +129,12 @@ rejected if the files have changed. FITS files are not embedded in the project:
 keep them with your data. No source image file is modified.
 
 ## Validation and limitations
+
+UI 3 extends the instrument finish and English presentation across every module
+inspector. Validation includes 235 regression tests, 39 Qt screenshots, unchanged
+scientific preview pixels for a matched FITS comparison, and selected live SASpro
+checks. See [UI_REVIEW.md](UI_REVIEW.md) for exact coverage and the final installed
+library recheck; this does not certify all host workflows or Windows.
 
 See the local reports/final_tests.log, reports/real_verification.json, and reports/integrity.json.
 These generated reports are excluded from Git. Recorded automated checks cover the
