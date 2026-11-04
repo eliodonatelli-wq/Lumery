@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLa
 from .palette_native import NativePaletteSettings
 from .model import Pipeline, Cancelled, EqualizerSettings, ghs, identity_ghs, dynamics, MODULE_NAMES, ParametricSettings, parametric, FilamentSettings, PaletteSettings,ColorSettings
 from .vendor.ghs.ui import Control
+from .clahe import ClaheSettings
 from .curves import CurveSettings
 from .curve_editor import CurveEditor
 from .english_ui import OutputCurveEditor,english_message
@@ -368,11 +369,14 @@ class ChainDialog(InstrumentDialog):
         for kind,title in MODULE_CATALOG:menu.addAction(title,lambda k=kind:self.canvas.add_module(k))
         menu.exec(QCursor.pos())
     def add_module(self,node):
-        settings=NativePaletteSettings() if node.kind=='palette_native' else FreezeSettings() if node.kind=='freeze' else CurveSettings() if node.kind=='curves' else self.pipeline.initial if node.kind=='ghs' else dynamics.Settings(mode='multiband') if node.kind=='compressor' else ParametricSettings() if node.kind=='parametric' else FilamentSettings() if node.kind=='filament' else PaletteSettings() if node.kind=='palette' else ColorSettings() if node.kind=='colors' else EqualizerSettings()
+        settings=ClaheSettings() if node.kind=='clahe' else NativePaletteSettings() if node.kind=='palette_native' else FreezeSettings() if node.kind=='freeze' else CurveSettings() if node.kind=='curves' else self.pipeline.initial if node.kind=='ghs' else dynamics.Settings(mode='multiband') if node.kind=='compressor' else ParametricSettings() if node.kind=='parametric' else FilamentSettings() if node.kind=='filament' else PaletteSettings() if node.kind=='palette' else ColorSettings() if node.kind=='colors' else EqualizerSettings()
         self.kinds[node.key]=node.kind
         if node.kind=='freeze':
             from .freeze_editor import FreezeEditor
             self.editors[node.key]=FreezeEditor(self,settings,'Freeze · '+str(node.serial),node.key)
+        elif node.kind=='clahe':
+            from .clahe_editor import ClaheEditor
+            self.editors[node.key]=ClaheEditor(self,settings,'CLAHE · '+str(node.serial))
         elif node.kind=='curves':
             self.editors[node.key]=CurveEditor(self,settings,'Curves · '+str(node.serial))
         elif node.kind=='palette_native':
@@ -490,6 +494,7 @@ class ChainDialog(InstrumentDialog):
             editor=self.editors.get(node.key)
             if editor is None:continue
             requirement='either' if node.kind=='ghs' and editor.force.isChecked() else 'linear' if node.kind=='ghs' else 'either'
+            if node.kind=='clahe' and not editor.settings().identity():requirement='nonlinear'
             if node.kind=='palette' and is_foraxx(editor.settings().values()['view_a']):requirement='nonlinear'
             if node.kind=='palette_native' and editor.settings().requires_nonlinear():requirement='nonlinear'
             status='bypass' if editor.bypass.isChecked() else 'unknown' if state=='unknown' else 'skipped' if requirement=='linear' and state=='nonlinear' else 'ok'

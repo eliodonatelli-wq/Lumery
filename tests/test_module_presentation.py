@@ -36,7 +36,7 @@ class InspectorPresentationTests(unittest.TestCase):
         return self.d.editors[node.key]
 
     def test_every_inspector_owns_metal_theme_without_changing_settings(self):
-        for kind in ('ghs', 'palette_native', 'eq', 'compressor', 'parametric',
+        for kind in ('clahe', 'ghs', 'palette_native', 'eq', 'compressor', 'parametric',
                      'filament', 'colors', 'curves', 'freeze', 'palette'):
             editor = self.add(kind)
             with self.subTest(kind=kind):
@@ -59,7 +59,7 @@ class InspectorPresentationTests(unittest.TestCase):
         forbidden = re.compile(r'\b(?:Cursori|disattiva|riattiva|Neutralizza|Seleziona|'
             r'Nessun|Rimuovi|Intensità|Visualizza|Congela|Aggiorna|Sblocca|Duplica|'
             r'Chiudi|Valore completo|Intervallo del cursore|Clic per|IN CODA|CATTURA|Neutralizzazione)\b', re.I)
-        for kind in ('ghs', 'palette_native', 'eq', 'compressor', 'parametric',
+        for kind in ('clahe', 'ghs', 'palette_native', 'eq', 'compressor', 'parametric',
                      'filament', 'colors', 'curves', 'freeze', 'palette'):
             editor = self.add(kind)
             for widget in [editor] + editor.findChildren(QWidget):

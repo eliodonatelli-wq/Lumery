@@ -1,7 +1,7 @@
 """AstroSuite entrypoint for source checkouts and portable ZIP installs."""
 SCRIPT_NAME = 'Lumerys · Palette Native DEV'
 SCRIPT_GROUP = 'Enhancement'
-SCRIPT_VERSION = '0.10.0.ui3'
+SCRIPT_VERSION = '0.10.0.clahe1'
 SCRIPT_DESCRIPTION = 'Serial node editor with suggested OSC/RGB, narrowband, and Foraxx starting workflows.'
 
 def run(ctx):

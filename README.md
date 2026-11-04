@@ -1,9 +1,8 @@
-# Lumerys · Instrument UI Development Preview — 0.10.0.ui3
+# Lumerys · CLAHE Development Preview — 0.10.0.clahe1
 
 This development worktree contains the approved brushed-metal instrument interface
 and its completion across all module inspectors. See [UI_REVIEW.md](UI_REVIEW.md)
-for the visual scope, checks and remaining host validation. The processing
-engines and image preview path remain unchanged from beta 2.
+for the visual scope, checks and remaining host validation. The new CLAHE node extends the processing chain; existing module engines remain unchanged.
 
 Isolated development version. The new **Palette Studio** node is a module in the
 Lumerys chain. The old **Nebula Palette** node is no longer available for
@@ -179,3 +178,32 @@ an external astronomical input from the adjacent Chain Studio workspace.
 The current `build_release.py` is a historical, environment-specific packaging and
 installation script; it depends on adjacent development files, local logs, and an
 existing SASpro installation and is not a standalone build command for a fresh clone.
+
+## CLAHE module
+
+Insert CLAHE after a stretch (for example INPUT → Adaptive GHS → CLAHE → OUTPUT).
+Already stretched images can use INPUT → CLAHE → OUTPUT. Only active, nonzero
+CLAHE requires non-linear input in [0, 1]; out-of-range or nonfinite values are
+reported without automatic normalization or clipping.
+
+- **Local scale**: tile side as 2–100% of the native image short side (default 12.5%).
+- **Contrast limit**: histogram cap relative to mean bin population, 1–16× (default 2×).
+- **Intensity**: blend amount, 0–100% (default 25%). Zero and bypass are exact identity.
+
+The native float engine uses 256 histogram bins, uniform excess redistribution,
+interpolation of neighboring tile mappings, and a single RGB gain derived from
+HSV value. It preserves RGB ratios, neutral colors and exact black. Uniform
+tiles retain an identity mapping. Histogram quantization is internal; source
+pixels are never converted to an integer image. No star mask or denoiser is applied.
+Fine scales or high limits can amplify noise and star structure.
+
+CLAHE runs on the native upstream result and is then reduced through the shared
+preview reducer. Its native cache is invalidated by parameter and upstream
+changes and bounded by the pipeline cache budget. Large images may take longer
+and require substantial temporary memory. A downstream module with its own proxy
+processing can still introduce its documented preview/render differences.
+
+Settings and the CLAHE engine version round-trip with projects, including bypass
+and node connections. Older projects without CLAHE remain readable. The existing
+Render, Export FITS and Freeze services operate on the new node. Live host
+render/export and visual quality on astronomical fields require separate review.

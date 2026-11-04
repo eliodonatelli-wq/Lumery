@@ -28,7 +28,8 @@ from .curves import input_histograms,CurveSettings,process as process_curves,VER
 from .freeze import FreezeSettings,VERSION as FREEZE_VERSION,frame_view,signature as freeze_signature
 from .palette_native import NativePaletteSettings, render as native_palette_render, VERSION as NATIVE_PALETTE_VERSION, COMPATIBLE_VERSIONS as NATIVE_PALETTE_COMPATIBLE_VERSIONS
 from .palette_native_inputs import signature as native_input_signature, load as native_load_inputs
-MODULE_NAMES={"palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
+from .clahe import ClaheSettings, process as process_clahe, VERSION as CLAHE_VERSION
+MODULE_NAMES={"clahe":"CLAHE","palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
 
 class Cancelled(Exception):
     pass
@@ -48,6 +49,7 @@ class Pipeline:
         self.cache = {}
         self.compressor_references={}
         self.native_palette_cache=OrderedDict()
+        self.clahe_cache=OrderedDict()
         self.freeze_frames={}
         self.freeze_proxies={}
         self.filament_cache=OrderedDict()
@@ -184,6 +186,25 @@ class Pipeline:
                             analysis=ghs.analyze(current)
                             output=ghs.process(current,ghs.build_curve(module['settings'],analysis),module['settings'])
                             if not identity_ghs(module['settings']): next_state='nonlinear'
+                    elif module['kind']=='clahe':
+                        settings=module['settings']
+                        if not settings.identity():
+                            if current_state!='nonlinear':
+                                raise ValueError('CLAHE requires non-linear data. Add an active stretch before CLAHE.')
+                            prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True),native_input_signature(m['settings']) if m['kind']=='palette_native' and not m['bypass'] else ()) for m in modules[:index])
+                            native_key=(self.fingerprint,state,input_settings if integrated_ghs else None,integrated_ghs,prefix,settings)
+                            prepared=self.clahe_cache.pop(module['id'],None)
+                            if prepared is None or prepared[0]!=native_key:
+                                progress('CLAHE · preparing native ingress')
+                                native=current if divisor==1 else self.compute_serial(state,input_settings,integrated_ghs,modules[:index],1,cancel,progress)['output']
+                                rgb=process_clahe(native,settings,cancel)
+                                rgb.setflags(write=False)
+                            else:rgb=prepared[1]
+                            self.clahe_cache[module['id']]=(native_key,rgb)
+                            while self.clahe_cache and buffer_bytes(self.clahe_cache)>self.cache_budget:
+                                self.clahe_cache.popitem(last=False)
+                            output=reduce_image(rgb,divisor)
+                            note='CLAHE · native calculation; RGB ratios preserved; exact black unchanged'
                     elif module['kind']=='curves':
                         output=process_curves(current,module['settings'],cancel)
                         if not module['settings'].identity():next_state='nonlinear'
@@ -318,6 +339,7 @@ class Pipeline:
         if any(m['kind']=='palette' for m in snapshot['modules']):data['versions']['palette']='9.7-nebula-0.6.8'
         if any(m['kind']=='palette' and sky_active(m['settings']) for m in snapshot['modules']):data['versions']['sky']=SKY_VERSION
         if any(m['kind']=='palette' and is_foraxx(m['settings'].values()['view_a']) for m in snapshot['modules']):data['versions']['foraxx']=FORAXX_VERSION
+        if any(m['kind']=='clahe' for m in snapshot['modules']):data['versions']['clahe']=CLAHE_VERSION
         if any(m['kind']=='curves' for m in snapshot['modules']):data['versions']['curves']=CURVES_VERSION
         if any(m['kind']=='colors' for m in snapshot['modules']):data['versions']['colors']='12.4'
         if any(m['kind']=='filament' for m in snapshot['modules']):data['versions']['filament']='0.6.0-trial-b6'
@@ -340,7 +362,7 @@ class Pipeline:
             return dict(state_index=data['input']['state_index'],ghs=gs,integrated=True,modules=[dict(id=str(uuid.uuid4()),kind='eq',settings=eq,bypass=data['module']['bypass'],force=False)],divisor=data['preview_divisor'],format=data['output']['format'],path=data['output']['path'])
         if data.get('schema')!=2 or data.get('application')!='AstroChain Prototype':raise ValueError('Unsupported project')
         if data['source']['sha256']!=self.fingerprint:raise ValueError('Select the same original image as the project.')
-        supported=dict(palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
+        supported=dict(clahe=CLAHE_VERSION,palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
         def version_supported(kind,version):
             if kind=='curves':return version in ('0.1.0',CURVES_VERSION)
             if kind=='palette_native':return version in NATIVE_PALETTE_COMPATIBLE_VERSIONS
@@ -352,6 +374,7 @@ class Pipeline:
                 p['output_points']=tuple(tuple(x) for x in p['output_points']);settings=ghs.Settings(**p);ghs.check(settings);return settings
             if kind=='palette_native':return NativePaletteSettings(**p)
             if kind=='freeze':return FreezeSettings(**p)
+            if kind=='clahe':return ClaheSettings(**p)
             if kind=='curves':return CurveSettings(**p)
             if kind=='eq':p['gains']=tuple(p['gains']);return EqualizerSettings(**p)
             if kind=='palette':return PaletteSettings(**p)
@@ -373,6 +396,7 @@ class Pipeline:
             if type(m['bypass']) is not bool or type(m.get('force',False)) is not bool:raise ValueError('Invalid module state')
             if m['kind']=='compressor' and (data['versions'].get('compressor')!='0.2.2' or type(m.get('auto_reference',True)) is not bool or type(m.get('spectrum',False)) is not bool):raise ValueError('Invalid compressor or missing version')
             if m['kind']=='palette_native' and data['versions'].get('palette_native') not in NATIVE_PALETTE_COMPATIBLE_VERSIONS:raise ValueError('Incompatible Palette Studio version')
+            if m['kind']=='clahe' and data['versions'].get('clahe')!=CLAHE_VERSION:raise ValueError('Incompatible CLAHE version')
             if m['kind']=='freeze' and data['versions'].get('freeze')!=FREEZE_VERSION:raise ValueError('Incompatible Freeze version')
             if m['kind']=='curves' and data['versions'].get('curves') not in ('0.1.0',CURVES_VERSION):raise ValueError('Incompatible Curves version')
             if m['kind']=='parametric' and data['versions'].get('parametric')!='0.2.2':raise ValueError('Incompatible Parametric Equalizer version')

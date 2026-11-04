@@ -1,13 +1,15 @@
-# Lumerys — Instrument UI Development Preview
+# Lumerys — CLAHE Development Preview
 
-Version: `0.10.0.ui3`
+Version: `0.10.0.clahe1`
 
-This revision completes the approved instrument interface across every module
-inspector, including reused vendor controls, tabs, numeric tooltips and Freeze
-messages. All Lumerys-owned captions are English. Parameter identifiers and
-saved project values remain unchanged. No image engine or preview-processing
-change is included. Native operating-system file dialogs follow the OS language.
-Offscreen checks do not certify every live host workflow or Windows appearance.
+This development revision adds the native CLAHE module to the UI3 interface.
+The module uses three controls: Local scale, Contrast limit, and Intensity.
+RGB channel ratios are preserved automatically with a shared gain; exact black
+remains black. CLAHE requires non-linear input with finite values in [0, 1].
+It never normalizes or clips input automatically. Bypass and zero intensity
+leave the input unchanged. Native processing precedes preview reduction.
+No host installation or publication is performed by this source change.
+Live AstroSuite and Windows validation remain separate from automated checks.
 
 ## Beta 2 review fixes
 
