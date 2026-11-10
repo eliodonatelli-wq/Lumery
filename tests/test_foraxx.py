@@ -42,7 +42,9 @@ class ForaxxTests(unittest.TestCase):
         p=Pipeline(source());g=dict(id='g',kind='ghs',settings=replace(p.initial,strength=2),bypass=False,force=False);f=dict(id='f',kind='palette',settings=settings(NAMES[1]),bypass=False)
         for divisor in (1,2,4,8):
             with patch.object(ghs,'process',wraps=ghs.process) as engine:r=p.compute_serial('linear',p.initial,False,[g,f],divisor)
-            self.assertEqual(engine.call_count,1);self.assertEqual(r['output_state'],'nonlinear');self.assertTrue(np.isfinite(r['output']).all())
+            self.assertEqual(engine.call_count,1 if divisor==1 else 0);self.assertEqual(r['output_state'],'nonlinear');self.assertTrue(np.isfinite(r['output']).all())
+            from astrochain.model import reduce_image
+            np.testing.assert_array_equal(r['stages']['g'],reduce_image(p.ghs_cache['g'][1],divisor))
             mapped,applied=p.visualize(r['output'],'nonlinear',True);self.assertFalse(applied)
 class ForaxxUiTests(unittest.TestCase):
     @classmethod

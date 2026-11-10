@@ -148,11 +148,14 @@ def draw_module_icon(painter, kind, accent, rect=QRectF(18, 23, 30, 30)):
                         Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
     painter.setBrush(Qt.BrushStyle.NoBrush)
     path = QPainterPath()
-    if kind in ('ghs', 'curves'):
+    if kind in ('ghs', 'curves', 'statistical'):
         painter.drawLine(QPointF(3, 26), QPointF(27, 26))
         painter.drawLine(QPointF(3, 26), QPointF(3, 3))
         path.moveTo(5, 24)
         if kind=='ghs':path.cubicTo(10, 15, 18, 12, 26, 4)
+        elif kind=='statistical':
+            path.cubicTo(6, 8, 17, 6, 26, 4)
+            painter.drawEllipse(QPointF(12,10),2,2)
         else:path.cubicTo(22, 25, 9, 6, 26, 4)
         painter.drawPath(path)
     elif kind in ('palette_native', 'palette'):

@@ -1,4 +1,25 @@
-# Lumerys · CLAHE Development Preview — 0.10.0.clahe1
+# Lumerys · Statistical Stretch Preview — 0.10.0.ghsauto1
+
+Statistical Stretch is available as an independent chain module and as a method
+for each gas in Palette Studio → Signals. The existing asinh path and old
+recipes remain compatible. See [INSTALL_BETA.md](INSTALL_BETA.md) for controls,
+range contracts, deliberate differences from SASpro and validation limits.
+
+The optional Camera / filter profiles mode adds versioned response snapshots,
+six camera records, standard-filter graph data, qualified automatic Hbeta
+separation, and numeric custom profiles (CSV / explicit line samples).
+Incomplete candidates remain explicit and never pretend to be supported.
+Matrix (current) stays the default and the original spectral1 ASI585/L-eXtreme
+path remains separate and numerically unchanged. See [INSTALL_BETA.md](INSTALL_BETA.md)
+for profile availability, import format, data assumptions and test instructions.
+
+Palette Studio now offers **RGB extraction → ASI585 / L-eXtreme (experimental)**
+in Signals / mixing. The current matrix stays the default. Confirm ASI585MC / Air
+and the standard L-eXtreme 7 nm before enabling this visual separation; no other
+sensor/filter profile is supported. It retains the tested 30% background rule,
+not the diagnostic 100% sky subtraction. This is not calibrated gas photometry.
+Saved projects retain the method and invalidate cached results when it changes.
+See [INSTALL_BETA.md](INSTALL_BETA.md) for comparison steps and limitations.
 
 This development worktree contains the approved brushed-metal instrument interface
 and its completion across all module inspectors. See [UI_REVIEW.md](UI_REVIEW.md)
@@ -80,6 +101,14 @@ Synthesis replaces any input SII and is always identified as
 artificial. It is not a sulfur measurement. Exported component names
 separately identify RGB estimates and synthetic SII. Foraxx SHO uses the
 non-negative synthetic component described above rather than this signed/softened variant.
+The same palette-specific SII definition is used for composition and component
+export, with or without gas stretch. Component exports remain before gas curves,
+gains and the Foraxx shared divisor; they are not the final RGB channels.
+Native component FITS headers record GASSTAGE and synthetic SII headers record
+SIIFORM (positive_residual for Foraxx SHO, signed_residual or soft_positive for
+classic synthesis). Softness does not affect Foraxx SHO.
+Version 1.4.1 corrects the unstretched Foraxx SHO SII export; existing RGB results
+and classic synthesis remain unchanged. Older exported SII files are not rewritten.
 
 Monotone curves use the shared PCHIP numerical component, with linear tangent
 extrapolation outside the domain. Curve evaluation does not clip samples or apply

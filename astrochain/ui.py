@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLa
 from .palette_native import NativePaletteSettings
 from .model import Pipeline, Cancelled, EqualizerSettings, ghs, identity_ghs, dynamics, MODULE_NAMES, ParametricSettings, parametric, FilamentSettings, PaletteSettings,ColorSettings
 from .vendor.ghs.ui import Control
+from .statistical_stretch import StatisticalSettings
+from .ghs_auto import suggest as suggest_ghs
 from .clahe import ClaheSettings
 from .curves import CurveSettings
 from .curve_editor import CurveEditor
@@ -75,7 +77,7 @@ class Job(QRunnable):
                 mapped,applied=self.pipeline.visualize(raw,state,self.s.get('display_auto',True) and not payload.get('sky_direct_display',False))
                 result.update(view_raw=raw,view_mapped=mapped,view_state=state,display_applied=applied)
             if self.s.get('auto'):
-                result['suggested']=ghs.suggest(ghs.analyze(out))
+                result['suggested']=suggest_ghs(out,channel_mode=self.s.get('auto_channel_mode','linked'),cancel=self.cancel)
             if self.render:
                 from .outputs import auxiliary_images,save_fits_bundle
                 result['auxiliary']=auxiliary_images(self.pipeline,self.s,result)
@@ -137,6 +139,7 @@ class Editor(InstrumentDialog):
             tools=QHBoxLayout()
             for label,fn in [('Auto',self.auto),('Reset',lambda:self.restore(ghs.Settings(strength=0,symmetry=0,highlights=0,black=0,faint=1,asinh=0,color=1,background=0))),('Reset curve',self.curve.reset)]:
                 button=QPushButton(label);button.clicked.connect(fn);tools.addWidget(button)
+                if label=='Auto':button.setToolTip('Fits visible GHS parameters toward the default Statistical Stretch luminance and contrast. Uses the native upstream image. RGB behavior and transfer curves remain GHS; the manual output curve is retained.')
             form.addRow(tools)
         else:
             self.gains=[]
@@ -369,11 +372,14 @@ class ChainDialog(InstrumentDialog):
         for kind,title in MODULE_CATALOG:menu.addAction(title,lambda k=kind:self.canvas.add_module(k))
         menu.exec(QCursor.pos())
     def add_module(self,node):
-        settings=ClaheSettings() if node.kind=='clahe' else NativePaletteSettings() if node.kind=='palette_native' else FreezeSettings() if node.kind=='freeze' else CurveSettings() if node.kind=='curves' else self.pipeline.initial if node.kind=='ghs' else dynamics.Settings(mode='multiband') if node.kind=='compressor' else ParametricSettings() if node.kind=='parametric' else FilamentSettings() if node.kind=='filament' else PaletteSettings() if node.kind=='palette' else ColorSettings() if node.kind=='colors' else EqualizerSettings()
+        settings=StatisticalSettings() if node.kind=='statistical' else ClaheSettings() if node.kind=='clahe' else NativePaletteSettings() if node.kind=='palette_native' else FreezeSettings() if node.kind=='freeze' else CurveSettings() if node.kind=='curves' else self.pipeline.initial if node.kind=='ghs' else dynamics.Settings(mode='multiband') if node.kind=='compressor' else ParametricSettings() if node.kind=='parametric' else FilamentSettings() if node.kind=='filament' else PaletteSettings() if node.kind=='palette' else ColorSettings() if node.kind=='colors' else EqualizerSettings()
         self.kinds[node.key]=node.kind
         if node.kind=='freeze':
             from .freeze_editor import FreezeEditor
             self.editors[node.key]=FreezeEditor(self,settings,'Freeze · '+str(node.serial),node.key)
+        elif node.kind=='statistical':
+            from .statistical_editor import StatisticalEditor
+            self.editors[node.key]=StatisticalEditor(self,settings,'Statistical Stretch · '+str(node.serial))
         elif node.kind=='clahe':
             from .clahe_editor import ClaheEditor
             self.editors[node.key]=ClaheEditor(self,settings,'CLAHE · '+str(node.serial))
@@ -477,7 +483,7 @@ class ChainDialog(InstrumentDialog):
         modules=[]
         for node in self.canvas.modules:
             editor=self.editors[node.key]
-            modules.append(dict(id=node.key,kind=node.kind,settings=editor.settings(),bypass=editor.bypass.isChecked(),force=editor.force.isChecked() if node.kind=='ghs' else False,position=[node.pos().x(),node.pos().y()]))
+            modules.append(dict(id=node.key,kind=node.kind,settings=editor.settings(),bypass=editor.bypass.isChecked(),force=editor.force.isChecked() if node.kind in ('ghs','statistical') else False,position=[node.pos().x(),node.pos().y()]))
             if node.kind=='parametric':modules[-1]['solo']=editor.solo_band
             if node.kind=='compressor':modules[-1].update(auto_reference=editor.auto_reference.isChecked(),spectrum=editor.graphs_toggle.isChecked())
         graph_modules=modules;by_id={module['id']:module for module in modules};modules=[by_id[key] for key in active]
@@ -488,25 +494,26 @@ class ChainDialog(InstrumentDialog):
         except ValueError:
             for node in self.canvas.modules:
                 editor=self.editors.get(node.key)
-                if editor:node.set_compatibility('either' if node.kind=='ghs' and editor.force.isChecked() else 'linear' if node.kind=='ghs' else 'either','unknown')
+                if editor:node.set_compatibility('either' if node.kind in ('ghs','statistical') and editor.force.isChecked() else 'linear' if node.kind in ('ghs','statistical') else 'either','unknown')
             return
         for node in nodes:
             editor=self.editors.get(node.key)
             if editor is None:continue
-            requirement='either' if node.kind=='ghs' and editor.force.isChecked() else 'linear' if node.kind=='ghs' else 'either'
+            requirement='either' if node.kind in ('ghs','statistical') and editor.force.isChecked() else 'linear' if node.kind in ('ghs','statistical') else 'either'
             if node.kind=='clahe' and not editor.settings().identity():requirement='nonlinear'
             if node.kind=='palette' and is_foraxx(editor.settings().values()['view_a']):requirement='nonlinear'
             if node.kind=='palette_native' and editor.settings().requires_nonlinear():requirement='nonlinear'
             status='bypass' if editor.bypass.isChecked() else 'unknown' if state=='unknown' else 'skipped' if requirement=='linear' and state=='nonlinear' else 'ok'
             if requirement=='nonlinear' and state=='linear' and not editor.bypass.isChecked():status='invalid'
-            if node.kind=='palette_native' and editor.settings().source=='fits_channels' and not editor.bypass.isChecked():
-                status='invalid' if editor.settings().requires_nonlinear() and not editor.settings().fits_nonlinear else 'ok'
+            if node.kind=='palette_native' and not editor.bypass.isChecked():
+                status='invalid' if editor.settings().requires_nonlinear() and not editor.settings().input_is_nonlinear(state) else 'unknown' if state=='unknown' and editor.settings().source!='fits_channels' else 'ok'
             node.set_compatibility(requirement,status)
             if node.kind=='freeze' and status=='ok' and editor.settings().token:state=editor.settings().state
             if node.kind=='palette_native' and status=='ok':
                 if editor.settings().source=='fits_channels':state='nonlinear' if editor.settings().fits_nonlinear else 'linear'
                 if editor.settings().nonlinear():state='nonlinear'
             if node.kind=='curves' and status=='ok' and not editor.settings().identity():state='nonlinear'
+            if node.kind=='statistical' and status=='ok':state='nonlinear'
             if node.kind=='ghs' and status=='ok' and not identity_ghs(editor.settings()):state='nonlinear'
             if node.kind=='colors' and status=='ok' and any(editor.settings().values()['tone'].get(k,0)!=0 for k in ('highlights','shadows','whites','blacks')):state='nonlinear'
     def schedule(self,*args):
@@ -546,7 +553,7 @@ class ChainDialog(InstrumentDialog):
         if not payload.get('error') and (payload.get('render') or payload.get('snapshot',{}).get('revision')==self.revision):
             for key,diagnostic in payload.get('diagnostics',{}).items():
                 editor=self.editors.get(key)
-                if editor is not None and editor.kind in ('compressor','parametric','filament','palette','palette_native','curves','freeze'):editor.update_diagnostics(diagnostic)
+                if editor is not None and editor.kind in ('statistical','compressor','parametric','filament','palette','palette_native','curves','freeze'):editor.update_diagnostics(diagnostic)
         if payload.get('display_only'):
             self.busy=False;self.render_button.setEnabled(True);self.export_button.setEnabled(True)
             if payload['epoch']==self.display_epoch and payload['revision']==self.revision:
@@ -568,7 +575,9 @@ class ChainDialog(InstrumentDialog):
                     meta=deepcopy(self.pipeline.metadata);meta['astrochain']=self.pipeline.serial_project(payload['snapshot']);meta['astrochain']['result_state']=payload['output_state']
                     self.ctx.open_new_document(payload['output'],metadata=meta,name='AstroChain Result')
                     for name,image in payload.get('auxiliary',{}).items():
-                        channel_meta=deepcopy(meta);channel_meta['CHANNEL']=name;channel_meta['SYNTHSII']=name=='SII_Synthetic'
+                        channel_meta=deepcopy(meta);channel_meta['CHANNEL']=name;channel_meta['SYNTHSII']=name.startswith('SII_Synthetic')
+                        from .outputs import gas_export_metadata
+                        channel_meta.update(gas_export_metadata(payload['snapshot'],name))
                         if name in ('R','G','B'):channel_meta['RGBPARENT']='AstroChain Result'
                         else:channel_meta['PALNODE']=payload['snapshot'].get('exports',{}).get('palette_source')
                         self.ctx.open_new_document(image,metadata=channel_meta,name='AstroChain_'+name)
@@ -616,7 +625,7 @@ class ChainDialog(InstrumentDialog):
         self.auto_editor=editor
         try:snapshot=self.snapshot()
         except ValueError as exc:self.status.setText(str(exc));return
-        index=next(i for i,m in enumerate(snapshot['modules']) if m['id']==key);snapshot['modules']=snapshot['modules'][:index];snapshot['divisor']=1;snapshot['auto']=True
+        index=next(i for i,m in enumerate(snapshot['modules']) if m['id']==key);snapshot['modules']=snapshot['modules'][:index];snapshot['divisor']=1;snapshot['auto']=True;snapshot['auto_channel_mode']=editor.settings().channel_mode
         self.timer.stop();self.busy=True;self.cancel_token=threading.Event()
         events=Events(self);self.auto_events=events
         def finished(payload):
@@ -683,7 +692,7 @@ class ChainDialog(InstrumentDialog):
             self.pipeline.display_settings=snapshot.get('display_settings',self.pipeline.initial);self.pipeline._display_curve=None
             for m in snapshot['modules']:
                 node=self.canvas.add_module(m['kind'],m['id']);editor=self.editors[node.key];editor.restore(m['settings']);editor.bypass.setChecked(m['bypass'])
-                if m['kind']=='ghs':editor.force.setChecked(m.get('force',False))
+                if m['kind'] in ('ghs','statistical'):editor.force.setChecked(m.get('force',False))
                 if m['kind']=='compressor':editor.auto_reference.setChecked(m.get('auto_reference',True));editor.graphs_toggle.setChecked(m.get('spectrum',False))
                 if m.get('position'):node.setPos(*m['position'])
             exports=snapshot.get('exports',{});self.export_components.setChecked(exports.get('components',False));self.export_rgb.setChecked(exports.get('rgb',False))

@@ -1,4 +1,7 @@
-"""Native Palette Studio v1.1. No vendor palette imports or implicit clipping.
+"""Native Palette Studio. Current matrix arithmetic remains signed and unclipped.
+
+The opt-in spectral mode explicitly uses the documented trial's background and
+nonnegative solve. It does not modify the default matrix or acquired FITS.
 
 Signal order H,O,S. Synthetic S = gain*(H - subtraction*O); signed by design.
 Optional soft positive part: (x+hypot(x,softness))/2. Softness is in data units.
@@ -9,8 +12,13 @@ No estimator is allowed to silently infer a physical gas separation from RGB.
 from dataclasses import dataclass
 import numpy as np
 from .tone_curve import IDENTITY, evaluate, validate_points
-VERSION='1.2.3'
-COMPATIBLE_VERSIONS=('1.2.1','1.2.2',VERSION)
+from . import spectral_extraction as spectral
+from . import response_profiles as profiles
+from . import profile_separation
+from .vendor.ghs.core import Settings as StretchSettings,analytic as stretch_analytic
+from .statistical_stretch import StatisticalSettings, process as statistical_process
+VERSION='1.5.0'
+COMPATIBLE_VERSIONS=('1.2.1','1.2.2','1.2.3','1.2.4','1.3.0','1.4.0','1.4.1',VERSION)
 HOO=((1.,0.,0.),(0.,1.,0.),(0.,1.,0.))
 SHO=((0.,0.,1.),(1.,0.,0.),(0.,1.,0.))
 PERMUTATIONS=('HOO','SHO','HSO','HOS','SOH','OSH','OHS')
@@ -22,6 +30,9 @@ CHANNEL_INDEX={'H':0,'O':1,'S':2}
 class NativePaletteSettings:
     palette:str='HOO'
     source:str='rgb_estimate'
+    extraction_method:str='matrix'
+    extraction_setup_confirmed:bool=False
+    response_profile:str=''
     # Explicit R->H and (G+B)/2->O. No empirical sensor subtraction.
     extraction:tuple=((1.,0.,0.),(0.,.5,.5),(0.,0.,0.))
     gains:tuple=(1.,1.,1.)
@@ -31,6 +42,11 @@ class NativePaletteSettings:
     sii_gain:float=1.
     sii_subtract:float=.25
     sii_softness:float=0.
+    gas_stretch:tuple=(0.,0.,0.)
+    gas_stretch_methods:tuple=('asinh','asinh','asinh')
+    gas_stat_target:tuple=(.25,.25,.25)
+    gas_stat_sigma:tuple=(5.,5.,5.)
+    gas_stat_no_clip:tuple=(False,False,False)
     gas_curves:tuple=(IDENTITY,)*3
     rgb_curves:tuple=(IDENTITY,)*3
     normalize:bool=False
@@ -46,14 +62,29 @@ class NativePaletteSettings:
     ha_path:str=''
     oiii_path:str=''
     sii_path:str=''
+    channel_snapshots:tuple=()
     alignment_confirmed:bool=False
     fits_nonlinear:bool=False
     def __post_init__(self):
+        spectral.validate_method(self.extraction_method,self.extraction_setup_confirmed)
+        object.__setattr__(self,'response_profile',profiles.validate_snapshot(self.response_profile))
         if self.palette not in PALETTES or self.source not in ('rgb_estimate','fits_channels'):raise ValueError('Invalid palette or signal source')
         for name,shape in [('extraction',(3,3)),('matrix',(3,3)),('gains',(3,)),('sky',(3,))]:
             a=np.asarray(getattr(self,name),dtype=float)
             if a.shape!=shape or not np.isfinite(a).all():raise ValueError('Invalid '+name)
             object.__setattr__(self,name,tuple(tuple(float(x) for x in row) for row in a) if a.ndim==2 else tuple(map(float,a)))
+        strengths=np.asarray(self.gas_stretch,dtype=float)
+        if strengths.shape!=(3,) or not np.isfinite(strengths).all() or np.any(strengths<0) or np.any(strengths>14):raise ValueError('Gas stretch must contain three strengths in [0,14]')
+        object.__setattr__(self,'gas_stretch',tuple(map(float,strengths)))
+        methods=tuple(self.gas_stretch_methods)
+        if len(methods)!=3 or any(m not in ('none','asinh','statistical') for m in methods):raise ValueError('Invalid gas stretch methods')
+        object.__setattr__(self,'gas_stretch_methods',methods)
+        for key in ('gas_stat_target','gas_stat_sigma','gas_stat_no_clip'):
+            values=tuple(getattr(self,key))
+            if len(values)!=3:raise ValueError('Three gas Statistical Stretch values required')
+            object.__setattr__(self,key,values)
+        for target,sigma,no_clip in zip(self.gas_stat_target,self.gas_stat_sigma,self.gas_stat_no_clip):
+            StatisticalSettings(target=target,sigma=sigma,no_black_clip=no_clip)
         for name in ('gas_curves','rgb_curves'):
             curves=tuple(tuple(tuple(map(float,p)) for p in c) for c in getattr(self,name))
             if len(curves)!=3:raise ValueError('Three curves required')
@@ -67,24 +98,47 @@ class NativePaletteSettings:
             if type(getattr(self,name)) is not bool:raise ValueError('Invalid '+name)
         for name in ('ha_path','oiii_path','sii_path'):
             if not isinstance(getattr(self,name),str):raise ValueError('Invalid channel path')
+        refs=tuple(tuple(ref) for ref in self.channel_snapshots)
+        if any(len(ref)!=4 or ref[0] not in ('Ha','OIII','SII') or any(not isinstance(x,str) or not x for x in ref) for ref in refs) or len({ref[0] for ref in refs})!=len(refs):
+            raise ValueError('Invalid channel snapshot references')
+        for name,token,uid,title in refs:
+            if getattr(self,{'Ha':'ha_path','OIII':'oiii_path','SII':'sii_path'}[name]):raise ValueError('Choose one source per channel')
+        object.__setattr__(self,'channel_snapshots',refs)
         roi=tuple(float(v) for v in self.sky_roi)
         if roi and (len(roi)!=4 or not np.isfinite(roi).all() or not (0<=roi[0]<roi[2]<=1 and 0<=roi[1]<roi[3]<=1)):
             raise ValueError('Invalid sky reference rectangle')
         object.__setattr__(self,'sky_roi',roi)
     def nonlinear(self):
-        return self.requires_nonlinear() or self.sii_softness>0 or any(c!=IDENTITY for c in self.gas_curves+self.rgb_curves) or self.protect
+        return self.stretch_active() or self.requires_nonlinear() or self.sii_softness>0 or any(c!=IDENTITY for c in self.gas_curves+self.rgb_curves) or self.protect
     def requires_nonlinear(self):return self.palette in FORAXX
 
+    def has_sii(self):
+        return self.synthetic or (bool(self.sii_path or any(ref[0]=='SII' for ref in self.channel_snapshots)) if self.source=='fits_channels' else self.extraction_method=='matrix' and bool(any(self.extraction[2])))
+    def gas_is_stretched(self,index):
+        return self.gas_stretch_methods[index]=='statistical' or (self.gas_stretch_methods[index]=='asinh' and self.gas_stretch[index]>0)
+    def stretch_active(self):return any(self.gas_is_stretched(i) for i in range(3 if self.has_sii() else 2))
     def input_is_nonlinear(self,chain_state):
-        return self.fits_nonlinear if self.source=='fits_channels' else chain_state=='nonlinear'
+        already_nonlinear=self.fits_nonlinear if self.source=='fits_channels' else chain_state=='nonlinear'
+        if already_nonlinear:return True
+        needed=3 if self.palette=='Foraxx SHO · synthetic SII' else 2
+        return all(self.gas_is_stretched(i) for i in range(needed))
+    def require_foraxx_state(self,chain_state):
+        if self.requires_nonlinear() and not self.input_is_nonlinear(chain_state):
+            needed=3 if self.palette=='Foraxx SHO · synthetic SII' else 2
+            missing=', '.join(name for i,name in enumerate(('Hα','OIII','SII')[:needed]) if not self.gas_is_stretched(i))
+            raise ValueError('Foraxx requires non-linear gases. Apply gas stretch to '+missing+' or confirm genuinely stretched external channels. Upstream GHS does not stretch external channels.')
 
 def validate_image(image):
     a=np.asarray(image)
     if a.ndim not in (2,3) or (a.ndim==3 and a.shape[-1]!=3) or min(a.shape[:2])<1 or not np.isfinite(a).all():raise ValueError('Finite mono/RGB image required')
     return a
 
-def acquire(image,s,channels=None):
+def acquire(image,s,channels=None,cancel=None):
     a=validate_image(image)
+    if s.extraction_method in (spectral.METHOD,profiles.METHOD):
+        if s.source!='rgb_estimate':raise ValueError('Experimental separation requires OSC RGB input, not external FITS channels. Select Matrix (current) for FITS.')
+        if s.extraction_method==spectral.METHOD:spectral.require_setup(s.extraction_setup_confirmed)
+        elif not s.extraction_setup_confirmed:raise ValueError('Confirm the selected camera/filter setup and RGB response assumptions, or select Matrix (current)')
     if s.source=='fits_channels':
         if channels is None or not s.alignment_confirmed:raise ValueError('Provide registered channels and confirm alignment')
         if 'Ha' not in channels or 'OIII' not in channels:raise ValueError('Ha and OIII are required')
@@ -97,15 +151,45 @@ def acquire(image,s,channels=None):
         gas=np.stack(planes,-1)
     else:
         if a.ndim!=3:raise ValueError('RGB estimation requires three channels')
-        gas=a.astype(np.float64)@np.asarray(s.extraction).T
-        has_sii=bool(np.any(np.asarray(s.extraction)[2]))
+        if s.extraction_method in (spectral.METHOD,profiles.METHOD):
+            if s.extraction_method==spectral.METHOD:ha,oiii=spectral.extract(a,cancel)
+            else:ha,oiii,_=profile_separation.extract(a,s.response_profile,cancel)
+            gas=np.stack((ha,oiii,np.zeros_like(ha)),-1).astype(np.float64)
+            has_sii=False
+        else:
+            gas=a.astype(np.float64)@np.asarray(s.extraction).T
+            has_sii=bool(np.any(np.asarray(s.extraction)[2]))
     if s.normalize:gas=(gas-s.norm_offset)/s.norm_scale
     if s.synthetic:
         residual=gas[...,0]-s.sii_subtract*gas[...,1]
-        if s.sii_softness:residual=(residual+np.hypot(residual,s.sii_softness))*.5
+        # Form the palette's sulfur once, before stretch, for RGB and exports.
+        if s.palette=='Foraxx SHO · synthetic SII':residual=np.maximum(residual,0.)
+        elif s.sii_softness:residual=(residual+np.hypot(residual,s.sii_softness))*.5
         gas[...,2]=s.sii_gain*residual;has_sii=True
     if (bool(np.any(np.asarray(s.matrix)[:,2])) if s.custom_matrix else 'S' in s.palette) and not has_sii:raise ValueError('Composition requires acquired/estimated SII or explicit synthetic SII')
     return gas
+
+def stretch_gases(gas,s,cancel=None,diagnostics=None):
+    """Post-synthesis, pre-curve stage. Never mutate acquired arrays.
+
+    Zero strengths return the acquired stage exactly. Palette-specific sulfur
+    is already formed from unstretched H/O by acquire, also for component export.
+    """
+    if not s.stretch_active():return gas
+    result=gas.copy()
+    for i,strength in enumerate(s.gas_stretch):
+        if i==2 and not s.has_sii():continue
+        method=s.gas_stretch_methods[i]
+        if method=='statistical':
+            settings=StatisticalSettings(target=s.gas_stat_target[i],sigma=s.gas_stat_sigma[i],no_black_clip=s.gas_stat_no_clip[i])
+            try:result[...,i],reference=statistical_process(result[...,i],settings,cancel)
+            except ValueError as exc:raise ValueError(('Hα','OIII','SII')[i]+': '+str(exc)) from exc
+            if diagnostics is not None:diagnostics[('Hα','OIII','SII')[i]]=reference
+        elif method=='asinh' and strength:
+            settings=StretchSettings(strength=strength,symmetry=0.,highlights=0.,black=0.,background=0.,asinh=1.)
+            result[...,i]=stretch_analytic(result[...,i],settings,'asinh')
+    if not np.isfinite(result).all():raise ValueError('Gas stretch exceeds finite numeric range')
+    return result
 
 def _foraxx_common_scale(channels,names):
     """Keep Foraxx inputs in [0,1] with one shared ceiling, never per-channel clipping."""
@@ -126,12 +210,14 @@ def render(image,s,channels=None,cancel=None):
     The correction strength is explicit and can be set to zero.
     """
     if cancel is not None and cancel.is_set():raise InterruptedError('Cancelled')
-    if s.source=='fits_channels' and s.requires_nonlinear() and not s.fits_nonlinear:
-        raise ValueError('Foraxx requires already stretched FITS channels. Upstream GHS does not process external files; select non-linear FITS and confirm their state in Palette Studio.')
-    gas=acquire(image,s,channels)
+    if s.source=='fits_channels':s.require_foraxx_state('linear')
+    gas_statistics={}
+    gas=stretch_gases(acquire(image,s,channels,cancel),s,cancel,gas_statistics)
     mask=np.zeros(gas.shape[:2],dtype=np.float64)
     curved=np.stack([evaluate(gas[...,i],c) for i,c in enumerate(s.gas_curves)],-1)*np.asarray(s.gains)
-    diagnostic={}
+    diagnostic={'extraction_method':s.extraction_method,'gas_stretch':s.gas_stretch,'gas_stretch_stage':'post_synthesis_pre_gas_curves'}
+    diagnostic.update(gas_stretch_methods=s.gas_stretch_methods,gas_statistics=gas_statistics)
+    if s.extraction_method==profiles.METHOD:diagnostic['response_profile']=profile_separation.qualify(s.response_profile)
     if s.palette in FORAXX:
         h,o=curved[...,0],curved[...,1]
         if s.palette=='Foraxx HOO':
@@ -139,11 +225,7 @@ def render(image,s,channels=None,cancel=None):
             required,common_scale,channel_ranges=_foraxx_common_scale(required,('Hα','OIII'))
             h,o=required[...,0],required[...,1]
         elif s.synthetic:
-            # Foraxx SHO uses a non-negative synthetic SII component. Keep the
-            # signed synthetic channel for classic SHO, but build this named
-            # Foraxx variant with its explicit positive SII definition.
-            sii=np.maximum(gas[...,0]-s.sii_subtract*gas[...,1],0.)*s.sii_gain
-            sulfur=evaluate(sii,s.gas_curves[2])*s.gains[2]
+            sulfur=curved[...,2]
             required=np.stack((h,o,sulfur),-1)
             required,common_scale,channel_ranges=_foraxx_common_scale(required,('Hα','OIII','SII sintetico'))
             h,o,sulfur=required[...,0],required[...,1],required[...,2]

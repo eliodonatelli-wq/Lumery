@@ -5,6 +5,9 @@ from .foraxx import is_foraxx,render as render_foraxx
 from .vendor.nebula.background import finish_background
 from .gas_curves import active as gas_active,protection_weight
 from .sky_background import estimate as estimate_sky, active as sky_active
+from . import spectral_extraction as spectral
+from . import response_profiles as profiles
+from . import profile_separation
 
 def palette_input(image):
     # Verbatim arithmetic from UnifiedStudio.palette_input, isolated from its GUI.
@@ -18,22 +21,34 @@ def palette_input(image):
 
 def extract(image,settings,cache=None):
     values=settings.values();cache={} if cache is None else cache
-    key=(id(image),image.shape,image.dtype.str,values['sensor'])
+    method=values['extraction_method']
+    if method==spectral.METHOD:
+        spectral.require_setup(values['extraction_setup_confirmed'])
+        if values['sensor']!=spectral.SENSOR:raise ValueError('Experimental separation supports only ASI585MC / Air + standard L-eXtreme 7 nm. Select Sony IMX585 (Starvis 2), or use the current extraction.')
+        if sky_active(settings):raise ValueError('Disable Sky background neutralization when using experimental separation; its tested extraction retains the 30% background rule.')
+    if method==profiles.METHOD:
+        if not values['extraction_setup_confirmed']:raise ValueError('Confirm the selected camera/filter setup and RGB response assumptions')
+        if sky_active(settings):raise ValueError('Disable Sky background neutralization when using profile separation; extraction retains the 30% background rule')
+    key=(id(image),image.shape,image.dtype.str,values['sensor'],method,values['response_profile'])
     if cache.get('key')!=key:
         adapted,divisor,offset=palette_input(image)
-        ha,o=palette.extract_channels_v5(adapted,values['sensor'])
+        if method==profiles.METHOD:ha,o,_=profile_separation.extract(adapted,values['response_profile'])
+        else:ha,o=spectral.extract(adapted) if method==spectral.METHOD else palette.extract_channels_v5(adapted,values['sensor'])
         cache.clear();cache.update(key=key,source=image,ha=ha,o=o,divisor=divisor,offset=offset)
     return cache['ha'],cache['o'],dict(values,refs=(cache['ha'],cache['o']))
 
 def process(image,settings,cache=None,state='linear'):
     cache={} if cache is None else cache
+    if settings.values()['extraction_method']==profiles.METHOD and state!='linear' and profile_separation.qualify(settings.values()['response_profile'])['hbeta_separated']:
+        raise ValueError('Hβ separation requires linear RGB ingress; remove upstream stretching or select the current method')
     ha,o,params=extract(image,settings,cache)
     if gas_active(params['gas_curves']):
         adapted,_,_=palette_input(image)
         params['_gas_weight']=protection_weight(adapted,params['gas_curves'],params['sky_neutralization']['roi'],linear=state=='linear')
     out=render_foraxx(params['view_a'],ha,o,params) if is_foraxx(params['view_a']) else palette.render_palette(params['view_a'],ha,o,params)
     out=palette.apply_global_color(out,params.get('global_hue',0),params.get('global_saturation',0))
-    diagnostic=dict(divisor=cache['divisor'],offset=cache['offset'],palette=params['view_a'])
+    diagnostic=dict(divisor=cache['divisor'],offset=cache['offset'],palette=params['view_a'],extraction_method=params['extraction_method'])
+    if params['extraction_method']==profiles.METHOD:diagnostic['response_profile']=profile_separation.qualify(params['response_profile'])
     weight=params.get('_gas_weight')
     if weight is not None:
         step=max(1,int(np.ceil(max(weight.shape)/512)))

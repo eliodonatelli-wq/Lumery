@@ -33,8 +33,10 @@ class NativeChainTests(unittest.TestCase):
   with self.assertRaises(Exception):self.p.compute_serial('linear',self.p.initial,False,[node()],4,e)
  def test_serialization(self):
   s=dict(state_index=1,ghs=self.p.initial,integrated=False,modules=[node()],divisor=4,format='FITS float32',path='',connections=[['input','native'],['native','output']])
-  data=json.loads(json.dumps(self.p.serial_project(s)));self.assertEqual(data['versions']['palette_native'],'1.2.3')
+  data=json.loads(json.dumps(self.p.serial_project(s)));self.assertEqual(data['versions']['palette_native'],'1.5.0')
   loaded=self.p.load_serial_project(data);self.assertEqual(loaded['modules'][0]['settings'],Settings())
+  data['versions']['palette_native']='1.4.0'
+  self.assertEqual(self.p.load_serial_project(data)['modules'][0]['settings'],Settings())
   data['versions']['palette_native']='1.2.1'
   self.assertEqual(self.p.load_serial_project(data)['modules'][0]['settings'],Settings())
   data['versions']['palette_native']='bad'
@@ -64,7 +66,7 @@ class NativeChainTests(unittest.TestCase):
    from dataclasses import asdict
    values=asdict(expected)
    for key,value in asdict(actual).items():
-    if isinstance(value,(tuple,float)):
+    if key!='gas_stretch_methods' and isinstance(value,(tuple,float)):
      np.testing.assert_allclose(value,values[key],rtol=1e-12,atol=1e-12,err_msg=key)
     else:self.assertEqual(value,values[key],key)
   assert_settings(editor.settings(),s);editor.reset();assert_settings(editor.settings(),Settings());self.assertFalse(editor.bypass.isChecked());editor.close()

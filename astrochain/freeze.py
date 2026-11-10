@@ -20,12 +20,29 @@ class FreezeSettings:
 
 def signature(pipeline,state,input_settings,integrated,modules):
     from .palette_native_inputs import signature as input_signature
+    from .response_profiles import METHOD
+    def settings_record(module):
+        value=asdict(module['settings'])
+        # Empty/inactive new profile fields must not stale spectral1 Freeze
+        # checkpoints, whose numeric processing has not changed.
+        if module['kind']=='palette_native':
+            if 'statistical' not in value.get('gas_stretch_methods',()):
+                for key in ('gas_stat_target','gas_stat_sigma','gas_stat_no_clip'):value.pop(key,None)
+            if tuple(value.get('gas_stretch_methods',()))==('asinh',)*3:value.pop('gas_stretch_methods',None)
+            if value.get('extraction_method')!=METHOD:value.pop('response_profile',None)
+            if not any(value.get('gas_stretch',())):value.pop('gas_stretch',None)
+            if not value.get('channel_snapshots'):value.pop('channel_snapshots',None)
+        if module['kind']=='palette':
+            data=json.loads(value['data'])
+            if data.get('extraction_method')!=METHOD:
+                data.pop('response_profile',None);value['data']=json.dumps(data,sort_keys=True,separators=(',',':'),allow_nan=False)
+        return value
     recipe=dict(source=pipeline.fingerprint,state=state,integrated=integrated,input=asdict(input_settings) if integrated else None,
-                modules=[{k:(asdict(m[k]) if k=='settings' else m[k]) for k in ('id','kind','settings','bypass','force','auto_reference') if k in m} for m in modules])
+                modules=[{k:(settings_record(m) if k=='settings' else m[k]) for k in ('id','kind','settings','bypass','force','auto_reference') if k in m} for m in modules])
     external={}
     for m in modules:
         if m['kind']=='palette_native' and not m['bypass'] and m['settings'].source=='fits_channels':
-            try:external[m['id']]=input_signature(m['settings'])
+            try:external[m['id']]=input_signature(m['settings'],pipeline.channel_frames)
             except (OSError,ValueError):external[m['id']]='unavailable'
     if external:recipe['external_inputs']=external
     return hashlib.sha256(json.dumps(recipe,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()

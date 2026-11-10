@@ -11,6 +11,9 @@ from .foraxx import NAMES,is_foraxx,normalize_palette_names
 from .sky_background import DEFAULTS as SKY_DEFAULTS
 from .gas_curve_editor import GasCurvePanel
 from .gas_curves import validate as validate_gas
+from . import spectral_extraction as spectral
+from . import response_profiles as profiles
+from .profile_editor import ProfileControls
 
 class PalettePanel(palette.StudioDialog):
     def __init__(self,owner):
@@ -58,6 +61,13 @@ class NebulaEditor(InstrumentDialog):
         for text,slot in [('Save',self.save_preset),('Load',self.load_preset)]:
             button=QPushButton(text);button.clicked.connect(slot);row.addWidget(button)
         root.addLayout(row)
+        row=QHBoxLayout();row.addWidget(QLabel('RGB extraction'))
+        self.extraction_method=QComboBox();self.extraction_method.addItem('Sensor mix (current)','matrix');self.extraction_method.addItem(spectral.LABEL+' · original',spectral.METHOD);self.extraction_method.addItem(profiles.LABEL,profiles.METHOD);row.addWidget(self.extraction_method,1);root.addLayout(row)
+        self.extraction_setup_confirmed=QCheckBox('I use ASI585MC / Air + standard L-eXtreme 7 nm');root.addWidget(self.extraction_setup_confirmed)
+        self.extraction_note=QLabel();self.extraction_note.setWordWrap(True);root.addWidget(self.extraction_note)
+        self.profiles=ProfileControls(owner.schedule,lambda:self.extraction_method.setCurrentIndex(0));root.addWidget(self.profiles)
+        self.extraction_method.currentIndexChanged.connect(self._extraction_changed)
+        self.extraction_setup_confirmed.toggled.connect(owner.schedule)
         # Keep the original tab object alive: original handlers depend on its indices.
         # Show only composition and extras. Stretch and output remain inaccessible.
         tabs=self.panel._studio_tabs;root.addWidget(tabs)
@@ -94,7 +104,27 @@ class NebulaEditor(InstrumentDialog):
         self._gas_presets={}
         self.gas=GasCurvePanel(owner.schedule);gas_page=QScrollArea();gas_page.setWidgetResizable(True);gas_page.setWidget(self.gas);tabs.addTab(gas_page,'Gas curves')
         self.panel.preset_combo.currentTextChanged.connect(lambda name:self.gas.restore(self._gas_presets.get(name,validate_gas())))
+        self._extraction_presets={}
+        self._response_presets={}
+        self.panel.preset_combo.currentTextChanged.connect(lambda name:self._restore_extraction(self._extraction_presets.get(name,('matrix',False))))
+        self.panel.preset_combo.currentTextChanged.connect(lambda name:self.profiles.restore(self._response_presets.get(name,'')))
         self.restore(settings);self.panel.chain_ready=True;self.panel.hide_excluded()
+    def _extraction_changed(self,*args):
+        method=self.extraction_method.currentData();experimental=method in (spectral.METHOD,profiles.METHOD)
+        self.profiles.setVisible(method==profiles.METHOD)
+        if method==profiles.METHOD:self.profiles.activate()
+        self.panel.sensor_combo.setEnabled(method!=profiles.METHOD)
+        self.extraction_setup_confirmed.setText('I confirm the selected camera/filter and RGB response assumptions' if method==profiles.METHOD else 'I use ASI585MC / Air + standard L-eXtreme 7 nm')
+        self.extraction_setup_confirmed.setVisible(experimental)
+        self.extraction_note.setVisible(experimental)
+        self.extraction_note.setText('Experimental visual separation, not calibrated gas channels. Select Sony IMX585 (Starvis 2). Uses the tested 30% background subtraction; disable Sky neutralization. RGB equalization or stretching changes the result.')
+        if method==profiles.METHOD:self.extraction_note.setText('Camera/filter profiles replace the legacy sensor coefficients. Visual estimates; retains 30% background subtraction. Disable Sky neutralization. Original ASI585 / L-eXtreme stays unchanged.')
+        if self.panel.chain_ready:self.owner.schedule()
+    def _restore_extraction(self,values):
+        method,confirmed=values
+        self.extraction_method.setCurrentIndex(self.extraction_method.findData(method))
+        self.extraction_setup_confirmed.setChecked(confirmed)
+        self._extraction_changed()
     def _sky_changed(self,*args):
         if not self._sky_restoring:self.owner.schedule()
     def sky_values(self):
@@ -117,9 +147,11 @@ class NebulaEditor(InstrumentDialog):
             self.set_sky_roi(values['roi'])
         finally:self._sky_restoring=False
     def settings(self):
-        return PaletteSettings(canonical(dict(self.panel._preset_values(),sky_neutralization=self.sky_values(),gas_curves=self.gas.values())))
+        return PaletteSettings(canonical(dict(self.panel._preset_values(),sky_neutralization=self.sky_values(),gas_curves=self.gas.values(),extraction_method=self.extraction_method.currentData(),extraction_setup_confirmed=self.extraction_setup_confirmed.isChecked(),response_profile=self.profiles.value())))
     def restore(self,settings):
         values=settings.values();self.gas.restore(values.pop('gas_curves'));self._restore_sky(values.pop('sky_neutralization'))
+        self.profiles.restore(values.pop('response_profile'))
+        self._restore_extraction((values.pop('extraction_method'),values.pop('extraction_setup_confirmed')))
         self.panel._restore_state(values);self.panel._timer.stop();self.panel.hide_excluded()
     def save_preset(self):
         path,_=QFileDialog.getSaveFileName(self,'Save Palette preset','Nebula_Palette.json','JSON (*.json)')
@@ -138,11 +170,15 @@ class NebulaEditor(InstrumentDialog):
                 for value in values.values():value['sky_neutralization']['roi']=None
                 self._sky_presets.update({name:value['sky_neutralization'] for name,value in values.items()})
                 self._gas_presets.update({name:value['gas_curves'] for name,value in values.items()})
-                self.panel.presets.update({name:{k:v for k,v in value.items() if k not in ('sky_neutralization','gas_curves')} for name,value in values.items()});self.panel.preset_combo.clear();self.panel.preset_combo.addItems(self.panel.presets);self.panel.preset_combo.setCurrentText(next(iter(values)));self.restore(PaletteSettings(canonical(next(iter(values.values())))))
+                self._extraction_presets.update({name:(value['extraction_method'],value['extraction_setup_confirmed']) for name,value in values.items()})
+                self._response_presets.update({name:value['response_profile'] for name,value in values.items()})
+                self.panel.presets.update({name:{k:v for k,v in value.items() if k not in ('sky_neutralization','gas_curves','extraction_method','extraction_setup_confirmed','response_profile')} for name,value in values.items()});self.panel.preset_combo.clear();self.panel.preset_combo.addItems(self.panel.presets);self.panel.preset_combo.setCurrentText(next(iter(values)));self.restore(PaletteSettings(canonical(next(iter(values.values())))))
             except Exception as exc:QMessageBox.warning(self,'Palette preset',str(exc))
     def update_diagnostics(self,diagnostic):
         self.gas.update_mask(diagnostic.get("gas_mask"))
         self.diagnostic.setText(f'Composition {diagnostic.get("palette","")} · shared source RGB adjustment: (pixel + {diagnostic.get("offset",0):.6g}) / {diagnostic.get("divisor",1):.6g} · no stretch')
+        if diagnostic.get('extraction_method')==spectral.METHOD:self.diagnostic.setText(self.diagnostic.text()+' · Experimental ASI585 / L-eXtreme separation')
+        if diagnostic.get('response_profile'):self.diagnostic.setText(self.diagnostic.text()+' · '+diagnostic['response_profile']['reason'])
         sky=diagnostic.get('sky')
         if sky:
             amount=sky.get('color_amount',sky['effective_amount'])

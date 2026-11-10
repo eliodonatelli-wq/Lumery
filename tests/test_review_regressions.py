@@ -54,10 +54,10 @@ class ExternalChannelTests(unittest.TestCase):
         palette = node('p', 'palette_native', replace(self.settings, palette='Foraxx HOO'))
         ghs = node('g', 'ghs', replace(p.initial, strength=10))
         for divisor in (1, 4):
-            with self.assertRaisesRegex(ValueError, 'already stretched FITS'):
+            with self.assertRaisesRegex(ValueError, 'non-linear gases'):
                 p.compute_serial('linear', p.initial, False, [ghs, palette], divisor)
         channels = dict(Ha=self.image, OIII=self.image*.5)
-        with self.assertRaisesRegex(ValueError, 'already stretched FITS'):
+        with self.assertRaisesRegex(ValueError, 'non-linear gases'):
             render(self.image, palette['settings'], channels)
         palette['settings'] = replace(palette['settings'], fits_nonlinear=True)
         output = p.compute_serial('linear', p.initial, False, [palette], 1)
