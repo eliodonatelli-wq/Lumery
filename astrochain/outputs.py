@@ -49,6 +49,15 @@ def auxiliary_images(pipeline,snapshot,payload):
         result.update({name:out[...,i] for i,name in enumerate(('R','G','B'))})
     return result
 
+def output_metadata(pipeline,snapshot,payload,name,image):
+    if name and name not in ('R','G','B'):
+        offset=payload.get('offsets',{}).get(snapshot.get('exports',{}).get('palette_source'),(0,0))
+    else:
+        offset=payload.get('offset',(0,0))
+    from .star_separation import cropped_metadata
+    return cropped_metadata(pipeline.metadata,image,offset,rebuild=image.shape[:2]!=pipeline.source.shape[:2])
+
+
 def save_fits_bundle(pipeline,snapshot,payload,cancel,progress):
     from astropy.io import fits
     path=Path(snapshot['path']).expanduser()
@@ -61,22 +70,23 @@ def save_fits_bundle(pipeline,snapshot,payload,cancel,progress):
     # Validate every conversion before creating any output files.
     for image in images.values():
         if not np.isfinite(image.astype(dtype)).all():raise ValueError('The selected precision causes overflow')
-    header=pipeline.metadata.get('_fits_header');header=header.copy() if isinstance(header,fits.Header) else fits.Header()
-    for key in ('BSCALE','BZERO','BLANK','CHECKSUM','DATASUM'):
-        if key in header:del header[key]
-    header.add_history('AstroChain 0.8.7; shared OUTPUT; no display stretch')
-    if any(m['kind']=='palette_native' and m['settings'].stretch_active() for m in snapshot['modules']):
-        header.add_history('Gas stretch: explicit per-gas method; post synthesis, before gas curves/gains')
-        header.add_history('Gas exports: _stretched; RGB exports: final composition')
     recipe=json.dumps(pipeline.serial_project(snapshot),sort_keys=True)
-    for start in range(0,len(recipe),68):header.add_history(recipe[start:start+68])
     temporary=[];published=[]
     try:
         for name,image in images.items():
             if cancel.is_set():raise Cancelled()
             progress('OUTPUT · preparing '+(name or 'final result'))
             fd,filename=tempfile.mkstemp(prefix='.astrochain-',suffix='.fits',dir=path.parent);os.close(fd);temporary.append((filename,paths[name]))
-            h=header.copy()
+            meta=output_metadata(pipeline,snapshot,payload,name,image)
+            h=meta.get('_fits_header')
+            h=h if isinstance(h,fits.Header) else fits.Header()
+            for key in ('BSCALE','BZERO','BLANK','CHECKSUM','DATASUM'):
+                h.remove(key,ignore_missing=True,remove_all=True)
+            h.add_history('AstroChain 0.8.7; shared OUTPUT; no display stretch')
+            if any(m['kind']=='palette_native' and m['settings'].stretch_active() for m in snapshot['modules']):
+                h.add_history('Gas stretch: explicit per-gas method; post synthesis, before gas curves/gains')
+                h.add_history('Gas exports: _stretched; RGB exports: final composition')
+            for start in range(0,len(recipe),68):h.add_history(recipe[start:start+68])
             from .response_profiles import METHOD as PROFILE_METHOD
             from .profile_separation import qualify
             candidates=[]

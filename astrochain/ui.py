@@ -46,37 +46,75 @@ class Job(QRunnable):
         result = dict(snapshot=self.s, render=self.render)
         try:
             modules=[dict(m,spectrum=False) if self.render and m['kind']=='compressor' else m for m in self.s['modules']]
-            if not self.render and not self.s.get('auto'):
+            analysis_only=self.s.get('auto') or self.s.get('sky_search') or self.s.get('stretch_auto')
+            if not self.render and not analysis_only:
                 point=self.s.get('preview_point','output')
                 if point in ('input','original'):modules=[]
                 elif point!='output':
                     index=next((i for i,m in enumerate(modules) if m['id']==point),len(modules)-1);modules=modules[:index+1]
-            payload = self.pipeline.compute_serial(self.s['state'], self.s['ghs'], self.s['integrated'], modules, 1 if self.render else self.s['divisor'], self.cancel, self.events.progress.emit,allow_partial=not self.render and not self.s.get('auto'))
+            if self.s.get('stretch_view'):
+                key, _, _ = self.s['stretch_view']
+                count = self.s['stretch_count']
+                module = next(m for m in modules if m['id'] == key)
+                passes = module['settings'].passes
+                settings = replace(module['settings'], passes=tuple(
+                    step if i < count else replace(step, enabled=False)
+                    for i, step in enumerate(passes)))
+                modules[-1] = dict(module, settings=settings)
+            native_composite = any(m['kind'] == 'recombine_stars' for m in modules)
+            payload = self.pipeline.compute_serial(self.s['state'], self.s['ghs'], self.s['integrated'], modules, 1 if self.render or self.s.get('stretch_view') or native_composite else self.s['divisor'], self.cancel, self.events.progress.emit,allow_partial=not self.render and not analysis_only)
             result.update(payload)
+            if native_composite and not self.render:
+                result['native_composite'] = True
             if self.s.get('wiring_incomplete'):
                 result['notes']=list(result.get('notes',[]))+['Wiring incomplete: live preview up to the last node connected to INPUT. Reconnect OUTPUT to export.']
             if payload.get('last_valid') and payload['last_valid']!='INPUT':
                 match=next((m for m in self.s['modules'] if m['id']==payload['last_valid']),None)
                 result['last_valid']=MODULE_NAMES.get(match['kind'],'INPUT') if match else 'INPUT'
             out = payload['output']
-            if not self.render and not self.s.get('auto'):
+            if not self.render and not analysis_only:
                 key=self.s.get('preview_point','output')
                 raw=payload['base'] if key=='original' else payload['output'] if key=='output' else payload['stages'].get(key,payload['output'])
                 state=self.s['state'] if key=='original' else payload['output_state'] if key=='output' else payload['states'].get(key,payload['output_state'])
                 selected=next((m for m in modules if m['id']==key),None)
-                if selected and selected['kind']=='parametric' and selected.get('solo') is not None and not selected['bypass']:
+                if selected and key in payload['stages'] and selected['kind']=='parametric' and selected.get('solo') is not None and not selected['bypass']:
                     index=modules.index(selected);ingress=payload['base'] if index==0 else payload['stages'][modules[index-1]['id']]
-                    scale=(self.pipeline.source.shape[0]/ingress.shape[0],self.pipeline.source.shape[1]/ingress.shape[1])
+                    shape=payload['geometries'].get(key,self.pipeline.source.shape)
+                    scale=(shape[0]/ingress.shape[0],shape[1]/ingress.shape[1])
                     raw,_=parametric.process(ingress,selected['settings'],scale,solo=selected['solo'])
                     result['solo_label']='SOLO · Parametric Band '+str(selected['solo']+1)+' · preview only'
-                if selected and selected['kind']=='palette_native' and selected['settings'].mask_view and not selected['bypass']:
+                if selected and key in payload['stages'] and selected['kind']=='palette_native' and selected['settings'].mask_view and not selected['bypass']:
                     from .model import reduce_image
                     mask=payload['diagnostics'][key]['mask']
                     raw=np.repeat(reduce_image(mask,self.s['divisor'])[...,None],3,-1);state='nonlinear'
                     result['solo_label']='Palette Studio · emission mask · preview only'
+                if selected and selected['kind'] == 'recombine_stars' and selected.get('mask_view'):
+                    mask = payload['diagnostics'].get(key, {}).get('mask')
+                    if mask is not None:
+                        raw, state = mask, 'nonlinear'
+                        result['solo_label'] = 'Recombine Stars · luminance mask'
+                if self.s.get('stretch_view'):
+                    _, index, picking = self.s['stretch_view']
+                    mode = self.s['stretch_mode'].capitalize()
+                    result['solo_label'] = f'{mode} pass {index + 1}' + (' · click to set GHS symmetry' if picking else '')
+                    if self.s['divisor'] != 1:
+                        from .model import reduce_image
+                        raw = reduce_image(raw, self.s['divisor'])
+                if native_composite and not self.s.get('stretch_view') and self.s['divisor'] != 1:
+                    from .model import reduce_image
+                    raw = reduce_image(raw, self.s['divisor'])
                 mapped,applied=self.pipeline.visualize(raw,state,self.s.get('display_auto',True) and not payload.get('sky_direct_display',False))
-                result.update(view_raw=raw,view_mapped=mapped,view_state=state,display_applied=applied)
-            if self.s.get('auto'):
+                shape=(self.pipeline.source.shape if key in ('input','original') else payload['geometries'].get(key,payload['native_shape']))
+                result.update(view_raw=raw,view_mapped=mapped,view_state=state,display_applied=applied,view_shape=shape)
+            if self.s.get('sky_search'):
+                from .sky_rectangle import find_sky_rectangle
+                result['sky_roi']=find_sky_rectangle(out,self.cancel)
+            if self.s.get('stretch_auto') == 'statistical':
+                from .statistical_stretch import process
+                defaults = StatisticalSettings()
+                process(out, defaults, self.cancel)
+                result['suggested'] = defaults
+            if self.s.get('auto') or self.s.get('stretch_auto') == 'ghs':
                 result['suggested']=suggest_ghs(out,channel_mode=self.s.get('auto_channel_mode','linked'),cancel=self.cancel)
             if self.render:
                 from .outputs import auxiliary_images,save_fits_bundle
@@ -119,7 +157,7 @@ class DisplayJob(QRunnable):
         self.events.done.emit(result)
 
 class Editor(InstrumentDialog):
-    def __init__(self, owner, kind, settings, title):
+    def __init__(self, owner, kind, settings, title, *, embedded=False):
         super().__init__(owner, Qt.WindowType.Tool)
         self.owner=owner;self.kind=kind;self.controls={}
         self.setWindowTitle(title);self.setModal(False);self.resize(550 if kind=='ghs' else 390,590 if kind=='ghs' else 460)
@@ -130,14 +168,18 @@ class Editor(InstrumentDialog):
         self.form=form;self.bypass=QCheckBox('Bypass');self.bypass.toggled.connect(owner.schedule);form.addRow(self.bypass)
         if kind=='ghs':
             self.force=QCheckBox('Apply to non-linear data too');self.force.toggled.connect(owner.schedule);form.addRow(self.force)
+            if embedded:
+                self.bypass.hide()
+                self.force.hide()
             self.channels=QComboBox();self.channels.addItems(['Linked','Unlinked']);form.addRow('RGB',self.channels);self.channels.currentIndexChanged.connect(owner.schedule)
             for name,label in dict(strength='GHS strength',symmetry='Symmetry',highlights='Highlight protection',black='Soft black point',faint='Faint contrast',asinh='Asinh blend',color='Preserve color',background='Background protection').items():
-                control=Control(name,getattr(settings,name));control.changed.connect(owner.schedule);self.controls[name]=control;form.addRow(label,control)
+                control=Control(name,getattr(settings,name),english=embedded);control.changed.connect(owner.schedule);self.controls[name]=control;form.addRow(label,control)
                 if control.fine_button is not None:
                     control.fine_button.setToolTip('On: fine slider range around the current value. Off: full range. The numeric field always accepts the full range and recenters the slider when needed. Toggle Fine off and on to recenter manually.')
             self.curve=OutputCurveEditor();self.curve.setMinimumHeight(140);self.curve.setMaximumHeight(155);form.addRow(self.curve);self.curve.changed.connect(owner.schedule)
             tools=QHBoxLayout()
             for label,fn in [('Auto',self.auto),('Reset',lambda:self.restore(ghs.Settings(strength=0,symmetry=0,highlights=0,black=0,faint=1,asinh=0,color=1,background=0))),('Reset curve',self.curve.reset)]:
+                if embedded and label=='Auto':continue
                 button=QPushButton(label);button.clicked.connect(fn);tools.addWidget(button)
                 if label=='Auto':button.setToolTip('Fits visible GHS parameters toward the default Statistical Stretch luminance and contrast. Uses the native upstream image. RGB behavior and transfer curves remain GHS; the manual output curve is retained.')
             form.addRow(tools)
@@ -251,6 +293,14 @@ class ChainDialog(InstrumentDialog):
         self.display_auto=QCheckBox('Auto GHS · preview only');self.display_auto.setChecked(True);self.display_auto.toggled.connect(self.request_display);image_tools.addWidget(self.display_auto);image_tools.addStretch(1)
         for title,fn in [('Fit',self.view.fit),('1:1',self.view.native)]:
             button=QPushButton(title);button.clicked.connect(fn);image_tools.addWidget(button)
+        self.error_notice = QLabel()
+        self.error_notice.setWordWrap(True)
+        self.error_notice.hide()
+        footer_layout.addWidget(self.error_notice)
+        self.error_flash = QTimer(self)
+        self.error_flash.setInterval(400)
+        self.error_flash.timeout.connect(self.flash_error)
+        self.error_ticks = 0
         self.status=QLabel();self.status.setWordWrap(True);self.status.setStyleSheet('color:#9aaec8;font-size:11px;');footer_layout.addWidget(self.status)
         self.view.show_image(self.pipeline.source[::4,::4],self.pipeline.source.shape)
         keep_in_front(self.input_editor);keep_in_front(self.output_editor)
@@ -292,8 +342,60 @@ class ChainDialog(InstrumentDialog):
         self.refresh_workflow_card();self.graph_changed()
         if error is not None:self.status.setText('Could not add the suggested workflow: '+str(error));return
         self.status.setText('Suggested nodes added and connected. Confirm the INPUT data state and review each module before rendering.')
+    def request_sky_search(self,editor):
+        if self.busy:
+            editor.sky_status.setText('Wait for the current processing to finish.')
+            return
+        key=next((key for key,panel in self.editors.items() if panel is editor),None)
+        try:
+            snapshot=self.snapshot()
+        except ValueError as exc:
+            editor.sky_status.setText(str(exc))
+            return
+        index=next((i for i,m in enumerate(snapshot['modules']) if m['id']==key),None)
+        if index is None or snapshot['modules'][index]['bypass']:
+            editor.sky_status.setText('Connect and enable Palette Studio to find sky.')
+            return
+        module=snapshot['modules'][index]
+        if module['settings'].sky_method!='white_pivot':
+            return
+        module=dict(module,settings=replace(module['settings'],protect=False,mask_view=False))
+        snapshot.update(modules=snapshot['modules'][:index]+[module],divisor=1,sky_search=True)
+        self.timer.stop()
+        self.busy=True
+        self.cancel_token=threading.Event()
+        self.cancel_button.setEnabled(True)
+        editor.sky_status.setText('Finding background…')
+        events=Events(self)
+        self.sky_search_events=events
+
+        def finished(payload):
+            self.busy=False
+            self.cancel_button.setEnabled(False)
+            if self.editors.get(key) is editor:
+                if snapshot['revision']!=self.revision:
+                    editor.sky_status.setText('Settings changed. Run the sky search again.')
+                elif 'sky_roi' in payload:
+                    editor.set_sky_roi(payload['sky_roi'])
+                    editor.sky_status.setText('Automatic rectangle selected. Review it in the preview.')
+                    self.point.setCurrentIndex(self.point.findData(key))
+                else:
+                    editor.sky_status.setText(payload.get('error') or 'Sky search cancelled.')
+            events.deleteLater()
+            if self.launch_pending_freeze():
+                return
+            if self.pending:
+                self.timer.start()
+            elif self.pending_display:
+                self.launch_display()
+
+        events.done.connect(finished)
+        self.pool.start(Job(self.pipeline,snapshot,events,self.cancel_token,False))
+
     def arm_sky_picker(self,editor,enabled):
         if enabled:
+            picker=getattr(self,'stretch_picker',None)
+            if picker is not None:picker.pick.setChecked(False)
             if self.busy:
                 editor.sky_pick.setChecked(False);self.status.setText('Wait for the current preview before selecting a sky reference.');return
             old=getattr(self,'sky_picker',None)
@@ -322,8 +424,23 @@ class ChainDialog(InstrumentDialog):
         if self.point.currentData()!=getattr(self,'sky_reference_point',None):
             self.status.setText('Return to the selected Palette input before choosing the sky reference.');return
         editor.set_sky_roi(roi)
+    def follow_curve_preview(self, editor):
+        """Show curve edits when the shared preview is on an earlier stage."""
+        key = next((key for key, panel in self.editors.items() if panel is editor), None)
+        if key is None or self.point.currentData() == 'output':
+            return
+        # The preview menu lists the input, original and connected nodes in
+        # processing order. A later stage already includes the curve.
+        target = self.point.findData(key)
+        if 0 <= self.point.currentIndex() < target:
+            blocked = self.point.blockSignals(True)
+            self.point.setCurrentIndex(target)
+            self.point.blockSignals(blocked)
+
     def arm_curve_picker(self,editor,enabled):
         if enabled:
+            picker=getattr(self,'stretch_picker',None)
+            if picker is not None:picker.pick.setChecked(False)
             if getattr(self,'sky_picker',None) is not None:self.sky_picker.sky_pick.setChecked(False)
             if self.curve_picker is not None and self.curve_picker is not editor:self.curve_picker.pick_button.setChecked(False)
             self.curve_picker=editor;self.view.curve_pick_mode=True
@@ -333,7 +450,63 @@ class ChainDialog(InstrumentDialog):
             self.status.setText('Click the preview to select a point on '+editor.mode.currentText()+'. Master samples the RGB mean.')
         elif self.curve_picker is editor:
             self.curve_picker=None;self.view.curve_pick_mode=False;self.view.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+    def arm_stretch_picker(self, editor, enabled):
+        if not enabled:
+            if getattr(self, 'stretch_picker', None) is editor:
+                self.stretch_picker = None
+                self.view.curve_pick_mode = False
+                self.view.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+                self.schedule()
+            return
+        point = self.point.findData(editor.key)
+        if point < 0:
+            editor.pick.setChecked(False)
+            self.status.setText('Connect Stretch to INPUT before picking symmetry.')
+            return
+        old = getattr(self, 'stretch_picker', None)
+        if old is not None and old is not editor:
+            old.pick.setChecked(False)
+        if self.curve_picker is not None:
+            self.curve_picker.pick_button.setChecked(False)
+        if getattr(self, 'sky_picker', None) is not None:
+            self.sky_picker.sky_pick.setChecked(False)
+        self.stretch_picker = editor
+        self.view.curve_pick_mode = True
+        self.view.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        self.status.setText('Click the native pass input to set GHS symmetry.')
+        self.schedule()
+
+    def pick_stretch_point(self, editor, x, y):
+        payload = self.displayed
+        index = editor.details.currentIndex()
+        if (self.busy or self.pending or payload is None
+                or payload['snapshot'].get('revision') != self.revision
+                or payload['snapshot'].get('stretch_view') != (editor.key, index, True)
+                or payload.get('processing_error')):
+            self.status.setText('Wait for the native pass input preview, then click again.')
+            return
+        image = payload['view_raw']
+        height, width = image.shape[:2]
+        if not (0 <= x < width and 0 <= y < height):
+            return
+        pixel = image[int(y), int(x)]
+        if image.ndim == 3:
+            value = float(ghs.intensity(pixel.reshape(1, 1, 3))[0, 0])
+        else:
+            value = float(pixel)
+        if not 0 <= value <= 1:
+            self.status.setText('The sampled intensity must be finite and within [0, 1].')
+            return
+        row = editor.rows[index]
+        row.ghs.restore(replace(row.ghs.settings(), symmetry=value))
+        editor.pick.setChecked(False)
+        self.status.setText(f'Pass {index + 1} · symmetry {value:.8g}')
+
     def pick_curve_point(self,x,y):
+        picker = getattr(self, 'stretch_picker', None)
+        if picker is not None:
+            self.pick_stretch_point(picker, x, y)
+            return
         editor=self.curve_picker
         if editor is None:return
         p=self.displayed
@@ -344,7 +517,8 @@ class ChainDialog(InstrumentDialog):
         if index is None:return
         ingress=p['base'] if index==0 else p['stages'].get(modules[index-1]['id'])
         if ingress is None:self.status.setText('Refresh the Curves preview before sampling.');return
-        h,w=self.pipeline.source.shape[:2]
+        ingress_key='input' if index==0 else modules[index-1]['id']
+        h,w=p.get('geometries',{}).get(ingress_key,self.pipeline.source.shape)[:2]
         if not (0<=x<w and 0<=y<h):return
         pixel=ingress[min(ingress.shape[0]-1,int(y*ingress.shape[0]/h)),min(ingress.shape[1]-1,int(x*ingress.shape[1]/w))]
         from .curves import sample_level
@@ -362,6 +536,9 @@ class ChainDialog(InstrumentDialog):
     def open_inspector(self,key):
         editor=self.input_editor if key=='input' else self.output_editor if key=='output' else self.editors.get(key)
         if editor is None:return
+        if key in self.kinds and self.kinds[key]=='separate_stars':
+            editor.open_panel()
+            return
         screen=self.screen().availableGeometry();editor.resize(min(editor.width(),screen.width()-30),min(editor.height(),screen.height()-50))
         editor.show();editor.raise_();editor.activateWindow()
     def add_menu(self):
@@ -371,10 +548,20 @@ class ChainDialog(InstrumentDialog):
         menu=QMenu(self)
         for kind,title in MODULE_CATALOG:menu.addAction(title,lambda k=kind:self.canvas.add_module(k))
         menu.exec(QCursor.pos())
+
     def add_module(self,node):
         settings=StatisticalSettings() if node.kind=='statistical' else ClaheSettings() if node.kind=='clahe' else NativePaletteSettings() if node.kind=='palette_native' else FreezeSettings() if node.kind=='freeze' else CurveSettings() if node.kind=='curves' else self.pipeline.initial if node.kind=='ghs' else dynamics.Settings(mode='multiband') if node.kind=='compressor' else ParametricSettings() if node.kind=='parametric' else FilamentSettings() if node.kind=='filament' else PaletteSettings() if node.kind=='palette' else ColorSettings() if node.kind=='colors' else EqualizerSettings()
         self.kinds[node.key]=node.kind
-        if node.kind=='freeze':
+        if node.kind=='separate_stars':
+            from .star_separation_editor import StarSeparationEditor
+            self.editors[node.key]=StarSeparationEditor(self,node.key,Events)
+        elif node.kind=='recombine_stars':
+            from .star_recombine_editor import RecombineEditor
+            self.editors[node.key]=RecombineEditor(self,node.key)
+        elif node.kind=='stretch':
+            from .stretch_editor import StretchEditor
+            self.editors[node.key]=StretchEditor(self,node.key,'Stretch · '+str(node.serial),Editor)
+        elif node.kind=='freeze':
             from .freeze_editor import FreezeEditor
             self.editors[node.key]=FreezeEditor(self,settings,'Freeze · '+str(node.serial),node.key)
         elif node.kind=='statistical':
@@ -461,13 +648,14 @@ class ChainDialog(InstrumentDialog):
         if editor:editor.bypass.setChecked(value)
     def remove_module(self,key):
         editor=self.editors.pop(key,None);self.kinds.pop(key,None)
+        self.pipeline.star_pairs.pop(key,None)
         if editor:editor.close();editor.deleteLater()
         if not self.loading:self.release_unused_freezes()
         self.graph_changed()
     def graph_changed(self):
         if self.loading:return
         self.refresh_workflow_card()
-        if self.canvas.connection_error:self.status.setText(self.canvas.connection_error);return
+        if self.canvas.connection_error:self.show_error(self.canvas.connection_error);return
         selected=self.point.currentData();self.point.blockSignals(True);self.point.clear()
         for title,key in [('OUTPUT','output'),('INPUT','input'),('Original','original')]:self.point.addItem(title,key)
         active_nodes=self.canvas.ordered_modules(require_output=False)
@@ -484,6 +672,7 @@ class ChainDialog(InstrumentDialog):
         for node in self.canvas.modules:
             editor=self.editors[node.key]
             modules.append(dict(id=node.key,kind=node.kind,settings=editor.settings(),bypass=editor.bypass.isChecked(),force=editor.force.isChecked() if node.kind in ('ghs','statistical') else False,position=[node.pos().x(),node.pos().y()]))
+            if node.kind=='recombine_stars':modules[-1]['mask_view']=editor.mask_view.isChecked()
             if node.kind=='parametric':modules[-1]['solo']=editor.solo_band
             if node.kind=='compressor':modules[-1].update(auto_reference=editor.auto_reference.isChecked(),spectrum=editor.graphs_toggle.isChecked())
         graph_modules=modules;by_id={module['id']:module for module in modules};modules=[by_id[key] for key in active]
@@ -513,12 +702,36 @@ class ChainDialog(InstrumentDialog):
                 if editor.settings().source=='fits_channels':state='nonlinear' if editor.settings().fits_nonlinear else 'linear'
                 if editor.settings().nonlinear():state='nonlinear'
             if node.kind=='curves' and status=='ok' and not editor.settings().identity():state='nonlinear'
+            if node.kind=='stretch' and status=='ok':
+                from .stretch import changes_state
+                if any(map(changes_state, editor.settings().passes)):state='nonlinear'
             if node.kind=='statistical' and status=='ok':state='nonlinear'
             if node.kind=='ghs' and status=='ok' and not identity_ghs(editor.settings()):state='nonlinear'
             if node.kind=='colors' and status=='ok' and any(editor.settings().values()['tone'].get(k,0)!=0 for k in ('highlights','shadows','whites','blacks')):state='nonlinear'
     def schedule(self,*args):
-        if self.loading:return
+        # Qt may emit control changes while on_add is still constructing the
+        # editor. graph_changed schedules a preview after registration.
+        if self.loading or any(node.key not in self.editors for node in self.canvas.modules):
+            return
+        picker = getattr(self, 'stretch_picker', None)
+        if picker is not None and self.point.findData(picker.key) < 0:
+            picker.pick.setChecked(False)
         self.refresh_compatibility()
+        if self.pipeline.star_pairs and not self.busy:
+            from .star_node import valid_pair
+            try:
+                snapshot=self.snapshot(require_output=False)
+                modules=snapshot['modules']
+            except ValueError:
+                modules=[]
+            valid=set()
+            for index,module in enumerate(modules):
+                if module['kind']=='separate_stars' and valid_pair(
+                    self.pipeline,snapshot['state'],snapshot['ghs'],snapshot['integrated'],modules[:index],module
+                ):
+                    valid.add(module['id'])
+            for key in set(self.pipeline.star_pairs)-valid:
+                self.pipeline.star_pairs.pop(key,None)
         self.revision+=1;self.pending=True;self.timer.start()
     def launch_preview(self):
         if self.busy:return
@@ -529,7 +742,22 @@ class ChainDialog(InstrumentDialog):
             snapshot=self.snapshot(require_output=render)
             if output_format is not None:snapshot['format']=output_format
         except ValueError as exc:
-            self.pending=False;self.status.setText(str(exc));return
+            self.pending=False;self.show_error(str(exc));return
+        if not render:
+            picker = getattr(self, 'stretch_picker', None)
+            if picker is not None:
+                snapshot['preview_point'] = picker.key
+            editor = self.editors.get(snapshot['preview_point'])
+            if editor is not None and editor.kind == 'stretch':
+                picking = getattr(self, 'stretch_picker', None) is editor
+                mode = 'before' if picking else editor.preview.currentData()
+                if mode != 'final':
+                    index = editor.details.currentIndex()
+                    snapshot['stretch_view'] = (editor.key, index, picking)
+                    snapshot['stretch_count'] = index + (mode == 'after')
+                    snapshot['stretch_mode'] = mode
+                    if picking:
+                        snapshot['divisor'] = 1
         self.timer.stop();self.pending=False;self.busy=True;self.rendering=render;self.cancel_token=threading.Event()
         self.cancel_button.setEnabled(True);self.render_button.setEnabled(False);self.export_button.setEnabled(False)
         if render:
@@ -549,15 +777,38 @@ class ChainDialog(InstrumentDialog):
             self.displayed=dict(snapshot=dict(divisor=divisor),view_raw=raw,view_state=self.resolved_state(),notes=[],processing_error='Source preview: chain result unavailable.')
         self.busy=True;self.render_button.setEnabled(False);self.export_button.setEnabled(False)
         self.pool.start(DisplayJob(self.pipeline,self.displayed['view_raw'],self.displayed['view_state'],self.display_auto.isChecked() and not self.displayed.get('sky_direct_display',False),self.display_epoch,self.revision,self.events))
+    def show_error(self, message):
+        text = 'ERROR · ' + message
+        if self.error_notice.text() == text:
+            return
+        self.error_notice.setText(text)
+        self.error_notice.show()
+        self.error_ticks = 0
+        self.flash_error()
+        self.error_flash.start()
+
+    def flash_error(self):
+        background = '#852638' if self.error_ticks % 2 == 0 else '#4a1823'
+        self.error_notice.setStyleSheet(
+            f'color:#fff0f2;background:{background};font-weight:bold;padding:6px;border:1px solid #ff697d;')
+        self.error_ticks += 1
+        if self.error_ticks >= 7:
+            self.error_flash.stop()
+
+    def clear_error(self):
+        self.error_flash.stop()
+        self.error_notice.clear()
+        self.error_notice.hide()
+
     def completed(self,payload):
         if not payload.get('error') and (payload.get('render') or payload.get('snapshot',{}).get('revision')==self.revision):
             for key,diagnostic in payload.get('diagnostics',{}).items():
                 editor=self.editors.get(key)
-                if editor is not None and editor.kind in ('statistical','compressor','parametric','filament','palette','palette_native','curves','freeze'):editor.update_diagnostics(diagnostic)
+                if editor is not None and editor.kind in ('statistical','compressor','parametric','filament','palette','palette_native','curves','freeze','recombine_stars'):editor.update_diagnostics(diagnostic)
         if payload.get('display_only'):
             self.busy=False;self.render_button.setEnabled(True);self.export_button.setEnabled(True)
             if payload['epoch']==self.display_epoch and payload['revision']==self.revision:
-                if payload.get('error'):self.status.setText('Display error: '+payload['error'])
+                if payload.get('error'):self.show_error('Display: '+payload['error'])
                 else:self.displayed.update({key:payload[key] for key in ('view_raw','view_mapped','view_state','display_applied')});self.show_result()
             if self.launch_pending_freeze():return
             if self.pending:self.timer.start()
@@ -565,27 +816,35 @@ class ChainDialog(InstrumentDialog):
             return
         self.busy=False;self.rendering=False;self.cancel_button.setEnabled(False);self.render_button.setEnabled(True);self.export_button.setEnabled(True);self.canvas.setEnabled(True)
         for e in [self.input_editor,self.output_editor]+list(self.editors.values()):e.setEnabled(True)
-        if payload.get('error'):self.status.setText('Error: '+payload['error'])
+        if payload.get('error'):
+            if payload.get('render') or payload.get('snapshot',{}).get('revision')==self.revision:
+                self.show_error(payload['error'])
         elif payload.get('cancelled'):self.status.setText('Operation cancelled.')
         elif payload['render']:
             self.last_output=payload['output']
             try:
                 if payload['snapshot']['format']=='Documento AstroSuite':
                     if self.ctx is None:raise ValueError('Use FITS export outside AstroSuite.')
-                    meta=deepcopy(self.pipeline.metadata);meta['astrochain']=self.pipeline.serial_project(payload['snapshot']);meta['astrochain']['result_state']=payload['output_state']
+                    from .outputs import output_metadata
+                    meta=output_metadata(self.pipeline,payload['snapshot'],payload,'',payload['output']);meta['astrochain']=self.pipeline.serial_project(payload['snapshot']);meta['astrochain']['result_state']=payload['output_state']
                     self.ctx.open_new_document(payload['output'],metadata=meta,name='AstroChain Result')
                     for name,image in payload.get('auxiliary',{}).items():
-                        channel_meta=deepcopy(meta);channel_meta['CHANNEL']=name;channel_meta['SYNTHSII']=name.startswith('SII_Synthetic')
+                        channel_meta=output_metadata(self.pipeline,payload['snapshot'],payload,name,image);channel_meta['astrochain']=deepcopy(meta['astrochain']);channel_meta['CHANNEL']=name;channel_meta['SYNTHSII']=name.startswith('SII_Synthetic')
                         from .outputs import gas_export_metadata
                         channel_meta.update(gas_export_metadata(payload['snapshot'],name))
                         if name in ('R','G','B'):channel_meta['RGBPARENT']='AstroChain Result'
                         else:channel_meta['PALNODE']=payload['snapshot'].get('exports',{}).get('palette_source')
                         self.ctx.open_new_document(image,metadata=channel_meta,name='AstroChain_'+name)
+                self.clear_error()
                 self.status.setText('Rendering complete · '+payload.get('saved','new AstroSuite document'))
             except Exception as exc:
                 report_error(self.ctx, exc, 'output')
-                self.status.setText('OUTPUT error: '+str(exc))
+                self.show_error('OUTPUT: '+str(exc))
         elif payload['snapshot']['revision']==self.revision:
+            if payload.get('processing_error'):
+                self.show_error(payload['processing_error'])
+            elif payload['snapshot'].get('preview_point')=='output' and not payload['snapshot'].get('wiring_incomplete') and not payload['snapshot'].get('stretch_view'):
+                self.clear_error()
             self.displayed=payload
             if payload['snapshot'].get('display_auto',True)!=self.display_auto.isChecked():self.pending_display=True
             else:self.show_result()
@@ -602,8 +861,16 @@ class ChainDialog(InstrumentDialog):
         display=np.clip(mapped,0,1)
         if self.clipping.isChecked():
             display=np.repeat(display[...,None],3,axis=2) if display.ndim==2 else display.copy();display[visual_lo]=(0,1,1);display[visual_hi]=(1,1,0)
-        self.view.show_image(display,self.pipeline.source.shape)
+        self.view.show_image(display,p.get('view_shape',self.pipeline.source.shape))
+        if getattr(self,'sky_picker',None) is None:
+            selected=self.editors.get(p['snapshot'].get('preview_point'))
+            roi=selected.sky_roi if selected is not None and selected.kind=='palette_native' else None
+            self.view.set_sky_roi(roi or None)
         quality='Freeze native · reduced preview' if p.get('freeze_index') is not None and p['snapshot']['divisor']!=1 else 'Sky preview at selected resolution · final render at Full' if p.get('sky_proxy_preview') else 'Full resolution' if p['snapshot']['divisor']==1 else 'Approximate proxy · check Full for detail'
+        if p.get('native_composite') and p['snapshot']['divisor'] != 1:
+            quality = 'Native render · reduced for display'
+        if p['snapshot'].get('stretch_view') and p['snapshot']['divisor'] != 1:
+            quality = 'Native Stretch · reduced preview'
         self.display_auto.setEnabled(p['view_state']!='nonlinear' and not p.get('sky_direct_display',False))
         if p.get('sky_direct_display',False):
             self.display_auto.setText('Auto GHS off · sky / output comparison')
@@ -618,6 +885,56 @@ class ChainDialog(InstrumentDialog):
         error=p.get('processing_error','')
         prefix=(error+' — OUTPUT unavailable: showing '+p.get('last_valid','INPUT')+'. ') if error else ''
         self.status.setText(prefix+(p.get('solo_label','')+' · ' if p.get('solo_label') else '')+f'{quality} · {visual} · data outside 0–1: {lo.mean():.2%} / {hi.mean():.2%} · display: {visual_lo.mean():.2%} / {visual_hi.mean():.2%}'+(' · '+'; '.join(p['notes']) if p['notes'] else ''))
+    def request_stretch_auto(self, editor):
+        if self.busy:
+            self.status.setText('Wait for processing before using Auto.')
+            return
+        snapshot = self.snapshot(require_output=False)
+        modules = snapshot['modules']
+        position = next((i for i, m in enumerate(modules) if m['id'] == editor.key), None)
+        if position is None or snapshot['state'] == 'unknown':
+            self.status.setText('Connect Stretch and confirm the INPUT data state before using Auto.')
+            return
+        index = editor.details.currentIndex()
+        row = editor.rows[index]
+        if row.locked.isChecked() or editor.bypass.isChecked():
+            return
+        editor.pick.setChecked(False)
+        snapshot['revision'] = self.revision
+        module = modules[position]
+        passes = module['settings'].passes
+        settings = replace(module['settings'], passes=tuple(
+            step if i < index else replace(step, enabled=False)
+            for i, step in enumerate(passes)))
+        snapshot.update(modules=modules[:position] + [dict(module, settings=settings)],
+                        divisor=1, stretch_auto=row.algorithm.currentData(),
+                        auto_channel_mode=row.ghs.settings().channel_mode)
+        self.timer.stop()
+        self.busy = True
+        self.cancel_token = threading.Event()
+        self.cancel_button.setEnabled(True)
+        events = Events(self)
+
+        def finished(payload):
+            self.busy = False
+            self.cancel_button.setEnabled(False)
+            if self.editors.get(editor.key) is editor and snapshot['revision'] == self.revision:
+                if 'suggested' in payload:
+                    panel = row.ghs if snapshot['stretch_auto'] == 'ghs' else row.statistical
+                    panel.restore(payload['suggested'])
+                    self.schedule()
+                elif payload.get('error'):
+                    self.status.setText(payload['error'])
+            events.deleteLater()
+            if not self.launch_pending_freeze():
+                if self.pending:
+                    self.timer.start()
+                elif self.pending_display:
+                    self.launch_display()
+
+        events.done.connect(finished)
+        self.pool.start(Job(self.pipeline, snapshot, events, self.cancel_token, False))
+
     def request_auto(self,editor):
         if self.busy:self.status.setText('Wait for processing to finish before using Auto.');return
         key=next((k for k,e in self.editors.items() if e is editor),None)

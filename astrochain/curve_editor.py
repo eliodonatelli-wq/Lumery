@@ -22,7 +22,7 @@ class CurveEditor(InstrumentDialog):
         self.curve.setToolTip('Input → Output · Click to add; drag to adjust; right-click or Delete to remove. Monotone curves with movable endpoints.')
         row=QHBoxLayout();self.x=QDoubleSpinBox();self.y=QDoubleSpinBox()
         for label,spin in [('Input',self.x),('Output',self.y)]:
-            spin.setRange(0,1);spin.setDecimals(5);spin.setSingleStep(.001);spin.setKeyboardTracking(False);row.addWidget(QLabel(label));row.addWidget(spin);spin.valueChanged.connect(self.edit_point)
+            spin.setRange(0,1);spin.setDecimals(5);spin.setSingleStep(.001);spin.setKeyboardTracking(False);row.addWidget(QLabel(label));row.addWidget(spin);spin.valueChanged.connect(lambda value, axis=label: self.edit_point(axis, value))
         root.addLayout(row)
         row=QHBoxLayout();self.amount=QDoubleSpinBox();self.amount.setRange(0,100);self.amount.setSuffix(' %');self.amount.setValue(settings.amount);self.amount.valueChanged.connect(self.changed);row.addWidget(QLabel('Amount'));row.addWidget(self.amount);root.addLayout(row)
         row=QHBoxLayout()
@@ -39,27 +39,42 @@ class CurveEditor(InstrumentDialog):
         self.point_timer=QTimer(self);self.point_timer.timeout.connect(self.sync_point);self.point_timer.start(100)
         self.restore(settings);self.loading=False
     def sync_point(self):
-        if self.x.hasFocus() or self.y.hasFocus():return
-        i=self.curve.selected;enabled=i is not None
-        for spin in (self.x,self.y):spin.setEnabled(enabled)
-        if i is not None:
-            for spin,value in zip((self.x,self.y),self.curve.points[i]):spin.blockSignals(True);spin.setValue(value);spin.blockSignals(False)
-    def edit_point(self):
-        i=self.curve.selected
-        if i is None:return
-        self.curve.move_selected(self.x.value(),self.y.value());self.sync_point()
+        index = self.curve.selected
+        for axis, spin in enumerate((self.x, self.y)):
+            spin.setEnabled(index is not None)
+            if index is not None and not spin.hasFocus():
+                blocked = spin.blockSignals(True)
+                spin.setValue(self.curve.points[index][axis])
+                spin.blockSignals(blocked)
+
+    def edit_point(self, axis, value):
+        index = self.curve.selected
+        if index is None:
+            return
+        x, y = self.curve.points[index]
+        if axis == 'Input':
+            x = value
+        else:
+            y = value
+        self.curve.move_selected(x, y)
+        self.sync_point()
+
     def changed(self,*args):
         self.stored[self.index]=self.curve.points
         self.curve.references=list(self.stored);self.curve.update()
         if not self.loading:
             # Throttle instead of restarting the debounce on every drag event.
             remaining=self.owner.timer.remainingTime()
+            self.owner.follow_curve_preview(self)
             self.owner.schedule()
             if remaining>=0:self.owner.timer.start(max(1,remaining))
     def switch(self,index):
         self.stored[self.index]=self.curve.points;self.index=index;self.curve.active=index;self.curve.references=list(self.stored);self.curve.set_points(self.stored[index],emit=False);self.sync_point()
         self.hist_note.setText('RGB output · solid / input · faint dashed · shared log scale')
-    def reset_all(self):self.restore(CurveSettings());self.owner.schedule()
+    def reset_all(self):
+        self.restore(CurveSettings())
+        self.owner.follow_curve_preview(self)
+        self.owner.schedule()
     def settings(self):
         self.stored[self.index]=self.curve.points
         return CurveSettings(tuple(self.stored),self.amount.value())

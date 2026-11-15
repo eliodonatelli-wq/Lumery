@@ -33,7 +33,7 @@ class NativeChainTests(unittest.TestCase):
   with self.assertRaises(Exception):self.p.compute_serial('linear',self.p.initial,False,[node()],4,e)
  def test_serialization(self):
   s=dict(state_index=1,ghs=self.p.initial,integrated=False,modules=[node()],divisor=4,format='FITS float32',path='',connections=[['input','native'],['native','output']])
-  data=json.loads(json.dumps(self.p.serial_project(s)));self.assertEqual(data['versions']['palette_native'],'1.5.0')
+  data=json.loads(json.dumps(self.p.serial_project(s)));self.assertEqual(data['versions']['palette_native'],'1.6.0')
   loaded=self.p.load_serial_project(data);self.assertEqual(loaded['modules'][0]['settings'],Settings())
   data['versions']['palette_native']='1.4.0'
   self.assertEqual(self.p.load_serial_project(data)['modules'][0]['settings'],Settings())
@@ -51,6 +51,18 @@ class NativeChainTests(unittest.TestCase):
    out=self.run_chain([node(s)])['output'];np.testing.assert_allclose(out[0,0],[.5,.1,.3])
    before=signature(s);fits.writeto(paths[1],np.full(self.image.shape[:2],.7),overwrite=True)
    self.assertNotEqual(signature(s),before);out=self.run_chain([node(s)])['output'];self.assertAlmostEqual(out[0,0,2],.7)
+ def test_legacy_sky_recipe_keeps_offset(self):
+  s=replace(Settings(),protect=True,sky_roi=(0.,0.,.25,.25),sky_method='offset')
+  snapshot=dict(state_index=1,ghs=self.p.initial,integrated=False,modules=[node(s)],
+                divisor=1,format='FITS float64',path='')
+  recipe=self.p.serial_project(snapshot)
+  recipe['versions']['palette_native']='1.5.0'
+  recipe['modules'][0]['settings'].pop('sky_method')
+  restored=self.p.load_serial_project(recipe)['modules'][0]['settings']
+  self.assertEqual(restored,s)
+  self.assertEqual(self.p.load_serial_project(self.p.serial_project(
+      dict(snapshot,modules=[node(replace(s,sky_method='white_pivot'))])
+  ))['modules'][0]['settings'].sky_method,'white_pivot')
  def test_editor_reset_restore(self):
   from PyQt6.QtWidgets import QApplication,QWidget
   from astrochain.palette_native_editor import NativePaletteEditor

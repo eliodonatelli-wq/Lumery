@@ -182,7 +182,7 @@ class IntegrationTests(unittest.TestCase):
         recipe['modules'][0]['settings'].pop('response_profile')
         recipe['modules'][0]['settings'].pop('channel_snapshots')
         recipe['modules'][0]['settings'].pop('gas_stretch')
-        for key in ('gas_stretch_methods','gas_stat_target','gas_stat_sigma','gas_stat_no_clip'):recipe['modules'][0]['settings'].pop(key)
+        for key in ('gas_stretch_methods','gas_stat_target','gas_stat_sigma','gas_stat_no_clip','sky_method'):recipe['modules'][0]['settings'].pop(key)
         before=hashlib.sha256(json.dumps(recipe,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
         self.assertEqual(signature(p,'linear',p.initial,False,[module]),before)
         a=signature(p,'linear',p.initial,False,[node(settings())]);b=signature(p,'linear',p.initial,False,[node(settings(setup(True)))]);self.assertNotEqual(a,b)

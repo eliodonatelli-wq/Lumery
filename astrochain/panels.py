@@ -13,7 +13,7 @@ class ForegroundGuard(QObject):
     def application_changed(self,state):
         if state==Qt.ApplicationState.ApplicationActive:self.schedule()
     def eventFilter(self,watched,event):
-        if watched is self.owner and event.type() in (QEvent.Type.WindowActivate,QEvent.Type.Show,QEvent.Type.WindowStateChange):self.schedule()
+        if watched is getattr(self, 'owner', None) and event.type() in (QEvent.Type.WindowActivate,QEvent.Type.Show,QEvent.Type.WindowStateChange):self.schedule()
         return False
     def schedule(self):
         if not self.pending:

@@ -26,6 +26,10 @@ from .vendor.nebula import mixer as color_engine
 from .vendor.parametric import processing as parametric
 from .vendor.parametric.parameters import Settings as ParametricSettings, Band as ParametricBand
 from .curves import input_histograms,CurveSettings,process as process_curves,VERSION as CURVES_VERSION
+from .star_recombine import RecombineSettings, VERSION as RECOMBINE_VERSION, COMPATIBLE_VERSIONS as RECOMBINE_VERSIONS, compose, suggest_stretch
+from .star_luminance_mask import build_mask
+from .star_recombine_inputs import external_signature as stellar_file_signature, internal_layer, load_registered_rgb
+from .star_node import StarSettings, VERSION as STAR_VERSION, valid_pair
 from .freeze import FreezeSettings,VERSION as FREEZE_VERSION,frame_view,signature as freeze_signature
 from .palette_native import NativePaletteSettings, render as native_palette_render, VERSION as NATIVE_PALETTE_VERSION, COMPATIBLE_VERSIONS as NATIVE_PALETTE_COMPATIBLE_VERSIONS
 from .palette_native_inputs import signature as native_input_signature, load as native_load_inputs
@@ -34,7 +38,9 @@ from . import response_profiles as response_profiles
 from .profile_separation import qualify as qualify_response_profile
 from .clahe import ClaheSettings, process as process_clahe, VERSION as CLAHE_VERSION
 from .statistical_stretch import StatisticalSettings, process as process_statistical, VERSION as STATISTICAL_VERSION
-MODULE_NAMES={"statistical":"Statistical Stretch","clahe":"CLAHE","palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
+from .stretch import StretchSettings, evaluate as evaluate_stretch, VERSION as STRETCH_VERSION, COMPATIBLE_VERSIONS as STRETCH_COMPATIBLE_VERSIONS
+
+MODULE_NAMES={"recombine_stars":"Recombine Stars","separate_stars":"Separate Stars","stretch":"Stretch","statistical":"Statistical Stretch","clahe":"CLAHE","palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
 
 class Cancelled(Exception):
     pass
@@ -57,6 +63,8 @@ class Pipeline:
         self.clahe_cache=OrderedDict()
         self.statistical_cache=OrderedDict()
         self.ghs_cache=OrderedDict()
+        self.stretch_cache=OrderedDict()
+        self.star_pairs={}
         self.freeze_frames={}
         self.channel_frames={}
         self.freeze_proxies={}
@@ -80,6 +88,9 @@ class Pipeline:
         if isinstance(chain, dict) and chain.get('application') == 'AstroChain Prototype':
             state=chain.get('result_state','unknown')
             return state if state in ('linear','nonlinear') else 'unknown'
+        separation = self.metadata.get('star_separation', {})
+        if isinstance(separation, dict) and type(separation.get('linear')) is bool:
+            return 'linear' if separation['linear'] else 'nonlinear'
         record = self.metadata.get('adaptive_ghs_stretch', {})
         if isinstance(record, dict) and record.get('linear') is False:
             return 'nonlinear'
@@ -154,7 +165,9 @@ class Pipeline:
         # native render on each control change.
         use_input = integrated_ghs and state == 'linear'
         checkpoint=next((i for i in range(len(modules)-1,-1,-1) if modules[i]['kind']=='freeze' and not modules[i]['bypass'] and modules[i]['settings'].token),None)
-        notes=[];diagnostics={}
+        notes=[];diagnostics={}; geometries={}; offsets={}
+        native_shape=self.source.shape
+        offset=(0,0)
         if checkpoint is None:
             base, _, _ = self.compute('linear' if use_input else 'nonlinear', input_settings, EqualizerSettings(), True, divisor, cancel, progress)
             current=base
@@ -168,6 +181,10 @@ class Pipeline:
             # INPUT previews are requested with an empty module list. No upstream
             # image processing runs here; base denotes this checkpoint's ingress.
             base=current;stages={frozen['id']:current};states={frozen['id']:current_state}
+            native_shape=self.freeze_frames[settings.token].shape
+            offset=settings.offset
+            geometries[frozen['id']]=native_shape
+            offsets[frozen['id']]=offset
             previous_key=('freeze',settings.token,divisor);start=checkpoint+1;new=[None]*start
             stale=settings.signature!=freeze_signature(self,state,input_settings,integrated_ghs,modules[:checkpoint])
             diagnostics[frozen['id']]=dict(frozen=True,stale=stale,shape=list(self.freeze_frames[settings.token].shape),bytes=self.freeze_frames[settings.token].nbytes)
@@ -175,7 +192,27 @@ class Pipeline:
         old=getattr(self,'serial_cache',[]);used=0
         for index,module in enumerate(modules[start:],start):
             if cancel.is_set(): raise Cancelled()
+            pair = None
+            if module['kind']=='separate_stars' and not module['bypass']:
+                pair = valid_pair(self,state,input_settings,integrated_ghs,modules[:index],module)
+                if pair is None or pair.state != current_state:
+                    message = 'Open Separate Stars and run separation for the current input and crop.'
+                    if not allow_partial:
+                        raise ValueError(message)
+                    return dict(base=base, output=current, stages=stages, states=states,
+                                output_state=current_state, notes=notes, diagnostics=diagnostics,
+                                processing_error=message, last_valid=modules[index-1]['id'] if index else 'INPUT',
+                                native_shape=native_shape, geometries=geometries, offsets=offsets, offset=offset)
+            ingress_shape=native_shape
             external_signature=native_input_signature(module['settings'],self.channel_frames) if module['kind']=='palette_native' and not module['bypass'] else ()
+            if module['kind'] == 'recombine_stars' and not module['bypass']:
+                settings = module['settings']
+                if settings.path:
+                    external_signature = stellar_file_signature(settings.path)
+                else:
+                    external_signature = tuple(
+                        (node['id'], node['settings'].token)
+                        for node in modules[:index] if node['kind'] == 'separate_stars')
             key=(previous_key,module['id'],module['kind'],module['settings'],module['bypass'],module.get('force',False),module.get('auto_reference',True),external_signature)
             record=old[index] if index<len(old) and old[index] is not None and old[index]['key']==key else None
             result_cached=record is not None
@@ -185,8 +222,81 @@ class Pipeline:
                 prior=old[index] if index<len(old) and old[index] is not None and old[index]['key'][0]==previous_key and old[index]['key'][2]==module['kind'] else None
                 engine=prior.get('engine',{}) if prior else {}; output=current; next_state=current_state; note='';diagnostic={}
                 if not module['bypass']:
-                    if module['kind']=='freeze':
+                    if pair is not None:
+                        output=reduce_image(pair.images[0],divisor)
+                    elif module['kind'] == 'recombine_stars':
+                        settings = module['settings']
+                        try:
+                            if divisor != 1:
+                                native = self.compute_serial(
+                                    state, input_settings, integrated_ghs, modules[:index + 1],
+                                    1, cancel, progress)
+                                output = reduce_image(native['output'], divisor)
+                                next_state = native['output_state']
+                                diagnostic = native['diagnostics'][module['id']]
+                            else:
+                                if settings.path:
+                                    source_key = (external_signature, native_shape[:2])
+                                    if engine.get('stellar_key') != source_key:
+                                        stars = load_registered_rgb(settings.path, native_shape)
+                                        engine = dict(engine, stellar_key=source_key, stellar_data=stars)
+                                    stars = engine['stellar_data']
+                                    linear = settings.external_linear
+                                else:
+                                    stars, linear, source_key = internal_layer(
+                                        self, state, input_settings, integrated_ghs,
+                                        modules[:index], native_shape, offset)
+                                strength = 0.
+                                if settings.mode == 'manual':
+                                    strength = settings.stretch
+                                elif settings.mode == 'auto' and linear:
+                                    if engine.get('stretch_key') != source_key:
+                                        engine = dict(engine, stretch_key=source_key, strength=suggest_stretch(stars))
+                                    strength = engine['strength']
+                                def check_cancel():
+                                    if cancel.is_set():
+                                        raise Cancelled()
+                                mask = None
+                                if settings.mask_enabled:
+                                    if engine.get('mask_contrast') != settings.mask_contrast:
+                                        progress('Recombine Stars · luminance mask')
+                                        mask = build_mask(current, settings.mask_contrast, check_cancel)
+                                        engine = dict(engine, mask_contrast=settings.mask_contrast, mask=mask)
+                                    else:
+                                        mask = engine['mask']
+                                output = compose(current, stars, strength, settings.intensity,
+                                                 settings.protect, check_cancel, mask=mask,
+                                                 attenuation=settings.attenuation)
+                                if settings.intensity and (strength or not linear or settings.protect):
+                                    next_state = 'nonlinear'
+                                diagnostic = dict(strength=strength, mask=mask)
+                        except ValueError as exc:
+                            if not allow_partial:
+                                raise
+                            return dict(base=base, output=current, stages=stages, states=states,
+                                        output_state=current_state, notes=notes, diagnostics=diagnostics,
+                                        processing_error=str(exc), last_valid=modules[index - 1]['id'] if index else 'INPUT',
+                                        native_shape=native_shape, geometries=geometries, offsets=offsets, offset=offset)
+                    elif module['kind']=='freeze':
                         note='Freeze live · capture to pin a native image'
+                    elif module['kind']=='stretch':
+                        from .stretch import active_pass
+                        if any(map(active_pass, module['settings'].passes)):
+                            prefix = tuple(
+                                (m['id'], m['kind'], m['settings'], m['bypass'],
+                                 m.get('force', False), m.get('auto_reference', True),
+                                 native_input_signature(m['settings'], self.channel_frames)
+                                 if m['kind']=='palette_native' and not m['bypass'] else ())
+                                for m in modules[:index])
+                            native_key = (self.fingerprint, state, integrated_ghs,
+                                          input_settings if use_input else None, prefix, module['id'])
+                            native = current if divisor == 1 else self.compute_serial(
+                                state, input_settings, integrated_ghs, modules[:index],
+                                1, cancel, progress)['output']
+                            rgb, next_state = evaluate_stretch(
+                                native, current_state, module['settings'], native_key,
+                                self.stretch_cache, self.cache_budget, cancel, progress)
+                            output = reduce_image(rgb, divisor)
                     elif module['kind']=='ghs':
                         if current_state=='nonlinear' and not module.get('force',False):
                             note='GHS automatically skipped: data is already non-linear'
@@ -249,7 +359,7 @@ class Pipeline:
                         if not module['settings'].identity():next_state='nonlinear'
                     elif module['kind']=='eq':
                         # The unmodified DCT engine accepts finite float linear and non-linear data.
-                        scale=(self.source.shape[0]/current.shape[0],self.source.shape[1]/current.shape[1])
+                        scale=(native_shape[0]/current.shape[0],native_shape[1]/current.shape[1])
                         output,_=spatial.process(current,module['settings'],scale,engine)
                     elif module['kind']=='palette_native':
                         if module['settings'].extraction_method==response_profiles.METHOD and current_state!='linear' and qualify_response_profile(module['settings'].response_profile)['hbeta_separated']:
@@ -319,7 +429,7 @@ class Pipeline:
                         diagnostic=dict(cache_bytes=pipeline.cache_bytes,seconds=pipeline.seconds,divisor=divisor,elapsed=elapsed,analysis_reused=reused)
                         note='Nebula Filament: approximate proxy; detection and scales vary with resolution. Check Full.' if divisor!=1 else ''
                     elif module['kind']=='parametric':
-                        scale=(self.source.shape[0]/current.shape[0],self.source.shape[1]/current.shape[1])
+                        scale=(native_shape[0]/current.shape[0],native_shape[1]/current.shape[1])
                         output,guarded=parametric.process(current,module['settings'],scale,engine)
                         diagnostic=dict(guarded_percent=guarded)
                     elif module['kind']=='compressor':
@@ -334,7 +444,7 @@ class Pipeline:
                                 reference=dynamics.reference_level(native)
                                 self.compressor_references[module['id']]=(reference_key,reference)
                             else:reference=prepared[1]
-                        factor=float(np.sqrt((self.source.shape[0]/current.shape[0])*(self.source.shape[1]/current.shape[1])))
+                        factor=float(np.sqrt((native_shape[0]/current.shape[0])*(native_shape[1]/current.shape[1])))
                         effective=replace(settings,reference=reference,crossovers=tuple(max(2.+i*.01,x/factor) for i,x in enumerate(settings.crossovers)),spatial_response=settings.spatial_response/factor)
                         output,diagnostic=dynamics.process(current,effective,engine)
                         diagnostic=dict(diagnostic,reference=reference)
@@ -346,15 +456,22 @@ class Pipeline:
                 output.setflags(write=False)
                 record=dict(key=key,output=output,state=next_state,note=note,engine=engine,diagnostic=diagnostic)
             current=record['output'];current_state=record['state'];stages[module['id']]=current;states[module['id']]=current_state
+            if pair is not None:
+                native_shape=pair.images[0].shape
+                offset=pair.offset
+            if module['kind'] == 'recombine_stars':
+                native_shape = native_shape[:2] + current.shape[2:]
+            geometries[module['id']]=native_shape
+            offsets[module['id']]=offset
             if record['note']:notes.append(record['note'])
-            if module['kind'] in ('statistical','parametric','filament','palette','palette_native','curves'):
+            if module['kind'] in ('statistical','parametric','filament','palette','palette_native','curves','recombine_stars'):
                 diagnostics[module['id']]=dict(record.get('diagnostic',{}),result_cached=result_cached)
                 if result_cached:diagnostics[module['id']]['elapsed']=0.
             if module['kind']=='compressor':
                 diag=dict(record.get('diagnostic',{}))
                 if module.get('spectrum',False) and not module['bypass']:
                     a,factor=dynamics_analysis.downsample(ingress,1024);b,_=dynamics_analysis.downsample(current,1024)
-                    native_scale=float(np.sqrt((self.source.shape[0]/ingress.shape[0])*(self.source.shape[1]/ingress.shape[1])))
+                    native_scale=float(np.sqrt((ingress_shape[0]/ingress.shape[0])*(ingress_shape[1]/ingress.shape[1])))
                     frequency,original=dynamics_analysis.spectrum(a,native_scale*factor);_,processed=dynamics_analysis.spectrum(b,native_scale*factor)
                     diag['spectrum']=(frequency,original,processed)
                 diagnostics[module['id']]=diag
@@ -377,21 +494,25 @@ class Pipeline:
         if cancel.is_set():raise Cancelled()
         sky_display=any(m['kind']=='palette' and not m['bypass'] and (sky_active(m['settings']) or any(any(x!=y for x,y in c['points']) for c in m['settings'].values()['gas_curves']['channels'].values())) for m in modules[(checkpoint+1) if checkpoint is not None else 0:])
         if checkpoint is not None:sky_display=sky_display or modules[checkpoint]['settings'].direct_display
-        return dict(freeze_index=checkpoint,base=base,output=current,stages=stages,states=states,output_state=current_state,notes=notes,diagnostics=diagnostics,sky_direct_display=sky_display,
+        return dict(native_shape=native_shape, geometries=geometries, offsets=offsets, offset=offset, freeze_index=checkpoint,base=base,output=current,stages=stages,states=states,output_state=current_state,notes=notes,diagnostics=diagnostics,sky_direct_display=sky_display,
                     sky_proxy_preview=bool(sky_display and divisor!=1))
 
     def serial_project(self, snapshot):
         snapshot=dict(snapshot,modules=snapshot.get("graph_modules",snapshot["modules"]))
-        data=dict(schema=2,application='AstroChain Prototype',source=dict(sha256=self.fingerprint),versions=dict(ghs='0.4.1',spatial='0.1.2'),input=dict(state_index=snapshot['state_index'],ghs=asdict(snapshot['ghs']),integrated=snapshot['integrated']),modules=[dict(id=m['id'],kind=m['kind'],settings=asdict(m['settings']),bypass=m['bypass'],force=m.get('force',False),position=m.get('position')) for m in snapshot['modules']],preview_divisor=snapshot['divisor'],output=dict(format=snapshot['format'],path=snapshot['path']))
+        data=dict(schema=2,application='AstroChain Prototype',source=dict(sha256=self.fingerprint),versions=dict(ghs='0.4.1',spatial='0.1.2'),input=dict(state_index=snapshot['state_index'],ghs=asdict(snapshot['ghs']),integrated=snapshot['integrated']),modules=[dict(id=m['id'],kind=m['kind'],settings=({'crop':m['settings'].crop} if m['kind']=='separate_stars' else asdict(m['settings'])),bypass=m['bypass'],force=m.get('force',False),position=m.get('position')) for m in snapshot['modules']],preview_divisor=snapshot['divisor'],output=dict(format=snapshot['format'],path=snapshot['path']))
         if any(m['kind']=='palette_native' for m in snapshot['modules']):data['versions']['palette_native']=NATIVE_PALETTE_VERSION
         if any((m['settings'].extraction_method if m['kind']=='palette_native' else m['settings'].values()['extraction_method'] if m['kind']=='palette' else 'matrix')==spectral.METHOD for m in snapshot['modules']):data['versions']['spectral_extraction']=spectral.VERSION
         if any((m['settings'].extraction_method if m['kind']=='palette_native' else m['settings'].values()['extraction_method'] if m['kind']=='palette' else 'matrix')==response_profiles.METHOD for m in snapshot['modules']):data['versions']['response_profiles']=response_profiles.VERSION
+        if any(m['kind']=='recombine_stars' for m in snapshot['modules']):data['versions']['recombine_stars']=RECOMBINE_VERSION
+        if any(m['kind']=='separate_stars' for m in snapshot['modules']):data['versions']['separate_stars']=STAR_VERSION
         if any(m['kind']=='freeze' for m in snapshot['modules']):data['versions']['freeze']=FREEZE_VERSION
         data['output']['exports']=dict(snapshot.get('exports',dict(components=False,rgb=False,palette_source=None)))
         if any(m['kind']=='palette' for m in snapshot['modules']):data['versions']['palette']='9.7-nebula-0.6.8'
         if any(m['kind']=='palette' and sky_active(m['settings']) for m in snapshot['modules']):data['versions']['sky']=SKY_VERSION
         if any(m['kind']=='palette' and is_foraxx(m['settings'].values()['view_a']) for m in snapshot['modules']):data['versions']['foraxx']=FORAXX_VERSION
         if any(m['kind']=='statistical' or (m['kind']=='palette_native' and 'statistical' in m['settings'].gas_stretch_methods) for m in snapshot['modules']):data['versions']['statistical']=STATISTICAL_VERSION
+        if any(m['kind']=='stretch' for m in snapshot['modules']):
+            data['versions'].update(stretch=STRETCH_VERSION, statistical=STATISTICAL_VERSION)
         if any(m['kind']=='clahe' for m in snapshot['modules']):data['versions']['clahe']=CLAHE_VERSION
         if any(m['kind']=='curves' for m in snapshot['modules']):data['versions']['curves']=CURVES_VERSION
         if any(m['kind']=='colors' for m in snapshot['modules']):data['versions']['colors']='12.4'
@@ -415,10 +536,12 @@ class Pipeline:
             return dict(state_index=data['input']['state_index'],ghs=gs,integrated=True,modules=[dict(id=str(uuid.uuid4()),kind='eq',settings=eq,bypass=data['module']['bypass'],force=False)],divisor=data['preview_divisor'],format=data['output']['format'],path=data['output']['path'])
         if data.get('schema')!=2 or data.get('application')!='AstroChain Prototype':raise ValueError('Unsupported project')
         if data['source']['sha256']!=self.fingerprint:raise ValueError('Select the same original image as the project.')
-        supported=dict(statistical=STATISTICAL_VERSION,clahe=CLAHE_VERSION,palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
+        supported=dict(recombine_stars=RECOMBINE_VERSION,separate_stars=STAR_VERSION,stretch=STRETCH_VERSION,statistical=STATISTICAL_VERSION,clahe=CLAHE_VERSION,palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
         def version_supported(kind,version):
             if kind=='response_profiles':return version==response_profiles.VERSION
             if kind=='spectral_extraction':return version==spectral.VERSION
+            if kind=='recombine_stars':return version in RECOMBINE_VERSIONS
+            if kind=='stretch':return version in STRETCH_COMPATIBLE_VERSIONS
             if kind=='curves':return version in ('0.1.0',CURVES_VERSION)
             if kind=='palette_native':return version in NATIVE_PALETTE_COMPATIBLE_VERSIONS
             return supported.get(kind)==version
@@ -427,8 +550,14 @@ class Pipeline:
             p=dict(values)
             if kind=='ghs':
                 p['output_points']=tuple(tuple(x) for x in p['output_points']);settings=ghs.Settings(**p);ghs.check(settings);return settings
-            if kind=='palette_native':return NativePaletteSettings(**p)
+            if kind=='palette_native':
+                if p.get('protect') and p.get('sky_roi'):
+                    p.setdefault('sky_method', 'offset')
+                return NativePaletteSettings(**p)
+            if kind=='recombine_stars':return RecombineSettings(**p)
+            if kind=='separate_stars':return StarSettings(crop=p.get('crop'))
             if kind=='freeze':return FreezeSettings(**p)
+            if kind=='stretch':return StretchSettings.from_project(p,parse)
             if kind=='statistical':return StatisticalSettings(**p)
             if kind=='clahe':return ClaheSettings(**p)
             if kind=='curves':return CurveSettings(**p)
@@ -453,6 +582,9 @@ class Pipeline:
             if m['kind']=='compressor' and (data['versions'].get('compressor')!='0.2.2' or type(m.get('auto_reference',True)) is not bool or type(m.get('spectrum',False)) is not bool):raise ValueError('Invalid compressor or missing version')
             if m['kind']=='palette_native' and data['versions'].get('palette_native') not in NATIVE_PALETTE_COMPATIBLE_VERSIONS:raise ValueError('Incompatible Palette Studio version')
             if m['kind']=='statistical' and data['versions'].get('statistical')!=STATISTICAL_VERSION:raise ValueError('Incompatible Statistical Stretch version')
+            if m['kind']=='stretch' and (data['versions'].get('stretch') not in STRETCH_COMPATIBLE_VERSIONS or data['versions'].get('statistical')!=STATISTICAL_VERSION):
+                raise ValueError('Incompatible Stretch version')
+            if m['kind']=='recombine_stars' and data['versions'].get('recombine_stars') not in RECOMBINE_VERSIONS:raise ValueError('Incompatible Recombine Stars version')
             if m['kind']=='clahe' and data['versions'].get('clahe')!=CLAHE_VERSION:raise ValueError('Incompatible CLAHE version')
             if m['kind']=='freeze' and data['versions'].get('freeze')!=FREEZE_VERSION:raise ValueError('Incompatible Freeze version')
             if m['kind']=='curves' and data['versions'].get('curves') not in ('0.1.0',CURVES_VERSION):raise ValueError('Incompatible Curves version')

@@ -14,7 +14,7 @@ class StretchSlider(QSlider):
 class StatisticalEditor(InstrumentDialog):
     kind = 'statistical'
 
-    def __init__(self, owner, settings, title):
+    def __init__(self, owner, settings, title, *, embedded=False):
         super().__init__(owner, Qt.WindowType.Tool)
         self.owner = owner
         self.setWindowTitle(title)
@@ -23,6 +23,9 @@ class StatisticalEditor(InstrumentDialog):
         root = QVBoxLayout(self)
         self.bypass = QCheckBox('Bypass'); root.addWidget(self.bypass)
         self.force = QCheckBox('Apply also to already non-linear data'); root.addWidget(self.force)
+        if embedded:
+            self.bypass.hide()
+            self.force.hide()
         self.bypass.toggled.connect(owner.schedule); self.force.toggled.connect(owner.schedule)
         form = QFormLayout(); root.addLayout(form)
         self.controls = {}; self.sliders = {}
@@ -59,7 +62,7 @@ class StatisticalEditor(InstrumentDialog):
         note.setWordWrap(True); root.addWidget(note)
         self.status = QLabel(); self.status.setWordWrap(True); root.addWidget(self.status)
         row = QHBoxLayout(); root.addLayout(row)
-        for label, slot in (('Reset', self.reset), ('Close', self.close)):
+        for label, slot in ((('Reset', self.reset),) if embedded else (('Reset', self.reset), ('Close', self.close))):
             button = QPushButton(label); button.clicked.connect(slot); row.addWidget(button)
         self.restore(settings)
 

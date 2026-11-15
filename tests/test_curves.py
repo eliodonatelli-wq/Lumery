@@ -128,6 +128,49 @@ class CurveUiTests(unittest.TestCase):
             self.assertEqual(len(e.curve.points),3);self.assertAlmostEqual(e.curve.points[1][0],.3,places=6)
             e.pick_button.setChecked(False);self.assertFalse(d.view.curve_pick_mode)
         finally:d.timer.stop();d.close()
+    def test_edit_after_sky_preview_follows_curves_output(self):
+        from astrochain.ui import ChainDialog, Events, Job
+        d = ChainDialog(np.full((32,40,3),.3,np.float32))
+        d.state.setCurrentIndex(2)
+        try:
+            palette = d.canvas.add_module('palette_native')
+            curves = d.canvas.add_module('curves')
+            editor = d.editors[curves.key]
+            # Auto Sky leaves the shared preview at the Palette output.
+            d.point.setCurrentIndex(d.point.findData(palette.key))
+            editor.curve.set_points(C)
+            d.timer.stop()
+            snapshot = d.snapshot()
+            self.assertEqual(snapshot['preview_point'],curves.key)
+            events = Events()
+            results = []
+            events.done.connect(results.append)
+            Job(d.pipeline,snapshot,events,threading.Event(),False).run()
+            result = results[0]
+            self.assertNotIn('error',result)
+            self.assertGreater(result['view_raw'].mean(),.3)
+            np.testing.assert_array_equal(result['view_raw'],result['stages'][curves.key])
+        finally:
+            d.timer.stop()
+            d.close()
+
+    def test_edit_one_coordinate_preserves_other_graph_coordinate(self):
+        from astrochain.ui import ChainDialog
+        d = ChainDialog(np.full((32,40,3),.3,np.float32))
+        try:
+            node = d.canvas.add_module('curves')
+            editor = d.editors[node.key]
+            editor.curve.set_points(C)
+            editor.curve.selected = 1
+            editor.sync_point()
+            # The graph can move before the spin boxes' refresh timer ticks.
+            editor.curve.move_selected(.4,.7)
+            editor.x.setValue(.45)
+            self.assertEqual(editor.curve.points[1],(.45,.7))
+        finally:
+            d.timer.stop()
+            d.close()
+
     def test_editor_graph_and_project(self):
         from astrochain.ui import ChainDialog
         d=ChainDialog(np.full((32,40,3),.2,np.float32));d.state.setCurrentIndex(2)

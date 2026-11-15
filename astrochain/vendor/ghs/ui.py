@@ -38,9 +38,10 @@ class Job(QRunnable):
 
 class CompactSpinBox(QDoubleSpinBox):
     """Compact display; retain all stored decimals and reveal them while editing."""
-    def __init__(self,precise=False):
+    def __init__(self,precise=False, *, english=False):
         self.expanded=False
         self.precise=precise
+        self.english=english
         super().__init__()
         self.setFixedWidth(90)
         self.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -50,7 +51,11 @@ class CompactSpinBox(QDoubleSpinBox):
         if self.precise:return self.locale().toString(value,'g',5)
         return self.locale().toString(value,'f',3).rstrip('0').rstrip(self.locale().decimalPoint())
     def _update_tooltip(self,value):
-        self.setToolTip('Valore completo: '+self.locale().toString(value,'f',self.decimals())+'\nClic per modificare con tutta la precisione.')
+        value = self.locale().toString(value, 'f', self.decimals())
+        if self.english:
+            self.setToolTip(f'Full value: {value}\nClick to edit at full precision.')
+        else:
+            self.setToolTip(f'Valore completo: {value}\nClic per modificare con tutta la precisione.')
     def focusInEvent(self,event):
         self.expanded=True
         self.lineEdit().setText(super().textFromValue(self.value()))
@@ -62,9 +67,10 @@ class CompactSpinBox(QDoubleSpinBox):
 
 class Control(QWidget):
     changed=pyqtSignal()
-    def __init__(self,name,value,fine_span=None):
+    def __init__(self,name,value,fine_span=None, *, english=False):
         super().__init__()
         lo,hi=BOUNDS[name]
+        self.english=english
         self.lo,self.hi=lo,hi
         self.slider_lo,self.slider_hi=lo,hi
         self.precise=name in ('symmetry','black')
@@ -72,7 +78,7 @@ class Control(QWidget):
         layout=QHBoxLayout(self); layout.setContentsMargins(0,0,0,0);layout.setSpacing(5)
         self.slider=QSlider(Qt.Orientation.Horizontal); self.slider.setRange(0,10000)
         self.slider.setSingleStep(1);self.slider.setPageStep(100)
-        self.spin=CompactSpinBox(self.precise); self.spin.setRange(lo,hi)
+        self.spin=CompactSpinBox(self.precise, english=english); self.spin.setRange(lo,hi)
         self.spin.setDecimals(10 if self.precise else 3)
         self.spin.setSingleStep(.05)
         self.spin.setKeyboardTracking(False)
@@ -99,7 +105,8 @@ class Control(QWidget):
             self.slider_lo,self.slider_hi=self.lo,self.hi
             if self.precise:self.spin.setSingleStep(.00001)
         self._sync_slider(self.spin.value())
-        self.slider.setToolTip(f'Intervallo del cursore: {self.slider_lo:.10g} … {self.slider_hi:.10g}')
+        label = 'Slider range' if self.english else 'Intervallo del cursore'
+        self.slider.setToolTip(f'{label}: {self.slider_lo:.10g} … {self.slider_hi:.10g}')
     def _sync_slider(self,value):
         old=self.slider.blockSignals(True)
         self.slider.setValue(round((value-self.slider_lo)/(self.slider_hi-self.slider_lo)*10000))

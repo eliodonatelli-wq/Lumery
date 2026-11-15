@@ -65,12 +65,44 @@ class NativeEngineTests(unittest.TestCase):
    render(image,replace(self.s,palette='Foraxx HOO'))
  def test_foraxx_scale_diagnostic_survives_sky_protection(self):
   image=np.array([[[.1,.9,.9],[.04,.08,.12]],[[.1,.15,.2],[.3,.4,.5]]],dtype=np.float64)
-  settings=replace(self.s,palette='Foraxx HOO',gains=(1.,2.,1.),protect=True,sky_roi=(0.,0.,.5,.5))
+  settings=replace(self.s,palette='Foraxx HOO',gains=(1.,2.,1.),protect=True,sky_roi=(.5,0.,1.,.5))
   output,diagnostic=render(image,settings)
   self.assertTrue(np.isfinite(output).all())
   self.assertAlmostEqual(diagnostic['foraxx_common_scale'],1./1.8)
   self.assertIn('foraxx_input_ranges',diagnostic)
   self.assertIn('sky_rgb',diagnostic)
+ def test_white_pivot_preserves_foraxx_white_and_dark_detail(self):
+  image=np.array([[[.35,.1,.1],[1.,1.,1.],[0.,0.,0.],[.01,.01,.01]]])
+  s=replace(self.s,palette='Foraxx HOO',protect=True,sky_roi=(0.,0.,.25,1.))
+  original,_=render(image,replace(s,protect=False))
+  corrected,diagnostic=render(image,s)
+  legacy,_=render(image,replace(s,sky_method='offset'))
+  np.testing.assert_allclose(corrected[0,0],original[0,0].mean(),atol=1e-14)
+  np.testing.assert_array_equal(corrected[0,1],[1.,1.,1.])
+  self.assertGreater(legacy.max(),1.)
+  self.assertGreaterEqual(corrected.min(),0.)
+  self.assertTrue(np.all(corrected[0,3]>corrected[0,2]))
+  self.assertEqual(diagnostic['sky_white'],1.)
+  half,_=render(image,replace(s,protection=.5))
+  np.testing.assert_allclose(half,(original+corrected)*.5,atol=1e-14)
+
+ def test_white_pivot_reads_post_curve_rgb_and_keeps_extended_range(self):
+  image=np.array([[[.2,.1,.1],[2.,2.,2.],[-.2,-.1,-.1]]])
+  curve=((0.,0.),(.2,.4),(1.,1.))
+  s=replace(self.s,protect=True,sky_roi=(0.,0.,.3,1.),
+            rgb_curves=(curve,self.s.rgb_curves[1],self.s.rgb_curves[2]))
+  out,diagnostic=render(image,s)
+  np.testing.assert_allclose(out[0,0],.2,atol=1e-14)
+  self.assertEqual(diagnostic['sky_white'],2.)
+  self.assertGreater(out.max(),1.)
+  self.assertLess(out.min(),0.)
+
+ def test_white_pivot_rejects_saturated_reference(self):
+  image=np.array([[[.3,1.,1.]]])
+  s=replace(self.s,protect=True,sky_roi=(0.,0.,1.,1.))
+  with self.assertRaisesRegex(ValueError,'darker sky rectangle'):
+   render(image,s)
+
 if __name__=='__main__':unittest.main()
 
 class AdditionalEngineTests(unittest.TestCase):

@@ -92,7 +92,7 @@ class GasStretchTests(unittest.TestCase):
  def test_freeze_neutral_compatibility_and_active_staleness(self):
   m=self.node(self.s);recipe=dict(source=self.p.fingerprint,state='linear',integrated=False,input=None,modules=[{k:asdict(v) if k=='settings' else v for k,v in m.items()}])
   recipe['modules'][0]['settings'].pop('response_profile');recipe['modules'][0]['settings'].pop('gas_stretch')
-  for key in ('gas_stretch_methods','gas_stat_target','gas_stat_sigma','gas_stat_no_clip'):recipe['modules'][0]['settings'].pop(key)
+  for key in ('gas_stretch_methods','gas_stat_target','gas_stat_sigma','gas_stat_no_clip','sky_method'):recipe['modules'][0]['settings'].pop(key)
   from astrochain.palette_native_inputs import signature
   recipe['external_inputs']={'p':signature(self.s,self.p.channel_frames)}
   expected=hashlib.sha256(json.dumps(recipe,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest();self.assertEqual(freeze_signature(self.p,'linear',self.p.initial,False,[m]),expected)

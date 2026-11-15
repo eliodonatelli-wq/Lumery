@@ -1,6 +1,34 @@
 # Lumerys — Experimental Separation Development Preview
 
-Version: `0.10.0.ghsauto1`
+Version: `0.10.0.stretch12`
+
+## Separate Stars
+
+Add **Separate Stars** before or after Stretch. Open the node, optionally
+draw a crop on its input, then click **Run separation**. Linear input uses a
+reversible temporary stretch. Non-linear input in [0, 1] goes directly to StarNet.
+The starless image feeds the chain. **Open Starless and Stars** opens the two
+images in the node input tonal domain as independent AstroSuite documents. If the upstream input or
+crop changes, run the separation again. Saved projects retain the crop and
+wiring. Run separation again after reopening a project.
+
+## Stretch development preview
+
+Add **Stretch** from the node menu. Select a pass to edit its controls. Each
+pass can use GHS or Statistical Stretch, and has its own On switch and opacity.
+**Lock** retains the settings and recalculates with them if the input changes.
+**Pick symmetry point** shows the native input of the selected GHS pass for
+sampling. Use **Before pass**, **After pass**, or **Final result** to compare
+outputs. The first pass starts enabled with Statistical settings. Auto restores starting settings using the selected pass input. The symmetry picker temporarily previews the pass input. A fourth pass can be added as needed.
+
+Each pass offers the 28 AstroSuite Layers blend modes next to Opacity.
+Normal preserves the original Stretch behavior. Other modes evaluate on
+operands clipped to [0, 1], then mix with the original input at the chosen
+opacity. In mono, Color uses the bounded input and Luminosity the bounded
+stretch result. Sigmoid uses the AstroSuite default center and strength.
+
+Use a separate scripts folder for this preview. Existing GHS and Statistical
+nodes remain available and existing projects keep their original nodes.
 
 ## GHS automatic starting level
 
@@ -186,8 +214,8 @@ include your SASpro version in beta feedback.
    If an identical folder already exists, stop rather than overwrite it.
 5. Choose **Scripts → Reload Scripts**. If the new version is not picked up,
    restart AstroSuite Pro. Avoid opening multiple Lumerys versions together.
-6. Open and select an image, then choose **Lumerys · Palette Native DEV** in the
-   Enhancement script group. The existing discovery name is retained to avoid duplicate menu entries.
+6. Open and select an image, then choose **Lumerys · Stretch DEV** in the
+   Enhancement script group.
 
 The usual script locations are:
 

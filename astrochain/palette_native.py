@@ -5,8 +5,8 @@ nonnegative solve. It does not modify the default matrix or acquired FITS.
 
 Signal order H,O,S. Synthetic S = gain*(H - subtraction*O); signed by design.
 Optional soft positive part: (x+hypot(x,softness))/2. Softness is in data units.
-Sky neutralization: median RGB from an explicit normalized rectangle is shifted
-to neutral gray with one constant translation, preserving pixel differences.
+Sky neutralization uses RGB medians from an explicit normalized rectangle.
+New settings anchor white; older recipes retain the original translation.
 No estimator is allowed to silently infer a physical gas separation from RGB.
 """
 from dataclasses import dataclass
@@ -17,8 +17,8 @@ from . import response_profiles as profiles
 from . import profile_separation
 from .vendor.ghs.core import Settings as StretchSettings,analytic as stretch_analytic
 from .statistical_stretch import StatisticalSettings, process as statistical_process
-VERSION='1.5.0'
-COMPATIBLE_VERSIONS=('1.2.1','1.2.2','1.2.3','1.2.4','1.3.0','1.4.0','1.4.1',VERSION)
+VERSION='1.6.0'
+COMPATIBLE_VERSIONS=('1.2.1','1.2.2','1.2.3','1.2.4','1.3.0','1.4.0','1.4.1','1.5.0',VERSION)
 HOO=((1.,0.,0.),(0.,1.,0.),(0.,1.,0.))
 SHO=((0.,0.,1.),(1.,0.,0.),(0.,1.,0.))
 PERMUTATIONS=('HOO','SHO','HSO','HOS','SOH','OSH','OHS')
@@ -53,6 +53,7 @@ class NativePaletteSettings:
     norm_offset:float=0.
     norm_scale:float=1.
     protect:bool=False
+    sky_method:str="white_pivot"
     sky_roi:tuple=()
     sky:tuple=(0.,0.,0.)
     noise:float=.005
@@ -104,6 +105,8 @@ class NativePaletteSettings:
         for name,token,uid,title in refs:
             if getattr(self,{'Ha':'ha_path','OIII':'oiii_path','SII':'sii_path'}[name]):raise ValueError('Choose one source per channel')
         object.__setattr__(self,'channel_snapshots',refs)
+        if self.sky_method not in ('offset','white_pivot'):
+            raise ValueError('Invalid sky neutralization method')
         roi=tuple(float(v) for v in self.sky_roi)
         if roi and (len(roi)!=4 or not np.isfinite(roi).all() or not (0<=roi[0]<roi[2]<=1 and 0<=roi[1]<roi[3]<=1)):
             raise ValueError('Invalid sky reference rectangle')
@@ -201,13 +204,51 @@ def _foraxx_common_scale(channels,names):
     scale=1./ceiling
     return channels*scale,scale,{name:[lo,hi] for name,(lo,hi) in zip(names,ranges)}
 
+def neutralize_sky(rgb, roi, strength):
+    """Match ROI medians while anchoring white and protecting dark pixels."""
+    height, width = rgb.shape[:2]
+    x0, y0, x1, y1 = roi
+    # Normalized corners from the automatic search represent pixel edges.
+    # Remove floating-point roundoff before converting them back to indices.
+    top, bottom = round(y0 * height, 10), round(y1 * height, 10)
+    left, right = round(x0 * width, 10), round(x1 * width, 10)
+    row, col = min(int(top), height - 1), min(int(left), width - 1)
+    region = rgb[row:max(row + 1, int(np.ceil(bottom))),
+                 col:max(col + 1, int(np.ceil(right)))]
+    background = np.median(region, axis=(0, 1))
+    target = float(background.mean())
+    white = max(1., float(rgb.max()))
+    diagnostics = dict(sky_rgb=background.tolist(), neutral_level=target,
+                       sky_roi=list(roi), sky_white=white)
+    if np.all(background == background[0]):
+        return rgb, diagnostics
+
+    headroom = white - background
+    if np.any(headroom <= 1e-8 * white):
+        raise ValueError('Choose a darker sky rectangle: a channel median is at the white point.')
+    gain = (white - target) / headroom
+    if np.any(gain > 10):
+        raise ValueError('Choose a darker sky rectangle: the required sky correction is too large.')
+
+    corrected = rgb + (target - background) * ((white - rgb) / headroom)
+    # In channels whose background is lowered, join black to the target
+    # smoothly in value with a linear toe. This avoids clipping the shadows
+    # or introducing negatives into nonnegative data.
+    for channel, median in enumerate(background):
+        if 0 <= target < median:
+            plane = rgb[..., channel]
+            below = plane < median
+            corrected[..., channel][below] = plane[below] * (target / median)
+
+    diagnostics['sky_gain'] = gain.tolist()
+    return rgb + strength * (corrected - rgb), diagnostics
+
+
 def render(image,s,channels=None,cancel=None):
     """Render a native ingress. Caller reduces the completed RGB for previews.
 
-    A manually selected rectangle supplies a constant RGB sky reference. Its
-    median palette color is translated to neutral gray across the image, which
-    preserves all pixel-to-pixel differences and therefore faint structures.
-    The correction strength is explicit and can be set to zero.
+    A manually selected rectangle supplies the RGB sky reference. The method
+    and strength are explicit so saved recipes can reproduce their output.
     """
     if cancel is not None and cancel.is_set():raise InterruptedError('Cancelled')
     if s.source=='fits_channels':s.require_foraxx_state('linear')
@@ -243,7 +284,7 @@ def render(image,s,channels=None,cancel=None):
     else:
         matrix=np.asarray(s.matrix if s.custom_matrix else tuple(tuple(1. if CHANNEL_INDEX[c]==i else 0. for i in range(3)) for c in s.palette))
         rgb=curved@matrix.T
-    if s.protect and s.sky_roi:
+    if s.protect and s.sky_roi and s.sky_method=='offset':
         h,w=rgb.shape[:2];x0,y0,x1,y1=s.sky_roi
         region=rgb[int(y0*h):max(int(np.ceil(y1*h)),int(y0*h)+1),int(x0*w):max(int(np.ceil(x1*w)),int(x0*w)+1)]
         if region.size:
@@ -253,6 +294,10 @@ def render(image,s,channels=None,cancel=None):
             mask.fill(s.protection)
             diagnostic.update(sky_rgb=background.tolist(),neutral_level=neutral,sky_shift=shift.tolist(),sky_roi=list(s.sky_roi))
     rgb=np.stack([evaluate(rgb[...,i],c) for i,c in enumerate(s.rgb_curves)],-1)
+    if s.protect and s.sky_roi and s.protection and s.sky_method == 'white_pivot':
+        rgb, sky = neutralize_sky(rgb, s.sky_roi, s.protection)
+        mask.fill(s.protection)
+        diagnostic.update(sky)
     if not np.isfinite(rgb).all():raise ValueError('Palette result exceeds finite numeric range')
     if cancel is not None and cancel.is_set():raise InterruptedError('Cancelled')
     return rgb,dict(mask=mask,synthetic_sii=s.synthetic,source=s.source,range=[float(rgb.min()),float(rgb.max())],**diagnostic)

@@ -10,7 +10,11 @@ class FreezeSettings:
     signature:str=''
     source:str=''
     direct_display:bool=False
+    offset:tuple=(0,0)
     def __post_init__(self):
+        offset=tuple(self.offset)
+        if len(offset)!=2 or any(type(v) is not int or v<0 for v in offset):raise ValueError('Invalid Freeze offset')
+        object.__setattr__(self,'offset',offset)
         if not isinstance(self.token,str) or (self.token and not re.fullmatch('[0-9a-f]{32}',self.token)):raise ValueError('Invalid Freeze identifier')
         if type(self.direct_display) is not bool:raise ValueError('Invalid Freeze display reference')
         if self.state not in ('linear','nonlinear'):raise ValueError('Invalid frozen image state')
@@ -25,7 +29,17 @@ def signature(pipeline,state,input_settings,integrated,modules):
         value=asdict(module['settings'])
         # Empty/inactive new profile fields must not stale spectral1 Freeze
         # checkpoints, whose numeric processing has not changed.
+        if module['kind']=='freeze' and not any(value['offset']):value.pop('offset')
+        if module['kind']=='recombine_stars' and not value['mask_enabled']:
+            for key in ('mask_enabled', 'mask_contrast', 'attenuation'):
+                value.pop(key)
+        if module['kind']=='stretch':
+            for step in value['passes']:
+                if step.get('blend_mode') == 'Normal':
+                    step.pop('blend_mode')
         if module['kind']=='palette_native':
+            if value.get('sky_method') == 'offset' or not (value.get('protect') and value.get('sky_roi')):
+                value.pop('sky_method', None)
             if 'statistical' not in value.get('gas_stretch_methods',()):
                 for key in ('gas_stat_target','gas_stat_sigma','gas_stat_no_clip'):value.pop(key,None)
             if tuple(value.get('gas_stretch_methods',()))==('asinh',)*3:value.pop('gas_stretch_methods',None)
@@ -41,6 +55,9 @@ def signature(pipeline,state,input_settings,integrated,modules):
                 modules=[{k:(settings_record(m) if k=='settings' else m[k]) for k in ('id','kind','settings','bypass','force','auto_reference') if k in m} for m in modules])
     external={}
     for m in modules:
+        if m['kind'] == 'recombine_stars' and not m['bypass'] and m['settings'].path:
+            from .star_recombine_inputs import external_signature
+            external[m['id']] = external_signature(m['settings'].path)
         if m['kind']=='palette_native' and not m['bypass'] and m['settings'].source=='fits_channels':
             try:external[m['id']]=input_signature(m['settings'],pipeline.channel_frames)
             except (OSError,ValueError):external[m['id']]='unavailable'
@@ -56,7 +73,7 @@ def capture(pipeline,state,input_settings,integrated,modules,node_id,cancel=None
         raise Cancelled()
     image=np.array(result['output'],copy=True,order='C');image.setflags(write=False)
     token=uuid.uuid4().hex
-    settings=FreezeSettings(token,result['output_state'],signature(pipeline,state,input_settings,integrated,modules[:index]),pipeline.fingerprint,result.get('sky_direct_display',False))
+    settings=FreezeSettings(token,result['output_state'],signature(pipeline,state,input_settings,integrated,modules[:index]),pipeline.fingerprint,result.get('sky_direct_display',False),result['offset'])
     pipeline.freeze_frames[token]=image
     return settings
 
