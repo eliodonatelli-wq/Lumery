@@ -215,7 +215,7 @@ def suggest(analysis):
     return min(candidates,key=lambda item:item[0])[1]
 
 
-def process(source, curve, settings):
+def process(source, curve, settings, *, selective_hdr=None, hdr_diagnostics=None):
     """Same immutable curve for overview, native ROI and full-resolution rows.
 
     Nonfinite samples (whole RGB pixel if any channel is invalid) are preserved.
@@ -245,6 +245,13 @@ def process(source, curve, settings):
         if not np.isfinite(out[valid]).all():
             raise OverflowError('Finite input exceeds the numeric range of this stretch; reduce intensity.')
         result[start:start+192]=out
+    if selective_hdr is not None:
+        from ...selective_hdr import apply_shoulder
+        from .output_curve import coefficients
+        _, levels, slopes = coefficients(settings.output_points)
+        if np.any(np.diff(levels) <= 0) or slopes[-1] <= 0:
+            raise ValueError('Selective HDR requires a rising GHS output curve and a positive final tangent.')
+        result = apply_shoulder(a, result, selective_hdr, diagnostics=hdr_diagnostics)
     # Retain float64 when input or extrapolated output needs it.
     if a.dtype==np.float32 and np.nanmax(np.abs(result[np.isfinite(result)]),initial=0)<=np.finfo(np.float32).max:
         return result.astype(np.float32)

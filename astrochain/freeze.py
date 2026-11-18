@@ -30,11 +30,24 @@ def signature(pipeline,state,input_settings,integrated,modules):
         # Empty/inactive new profile fields must not stale spectral1 Freeze
         # checkpoints, whose numeric processing has not changed.
         if module['kind']=='freeze' and not any(value['offset']):value.pop('offset')
+        if module['kind']=='recombine_stars' and not value.get('document_title'):
+            value.pop('document_title', None)
         if module['kind']=='recombine_stars' and not value['mask_enabled']:
             for key in ('mask_enabled', 'mask_contrast', 'attenuation'):
                 value.pop(key)
         if module['kind']=='stretch':
             for step in value['passes']:
+                hdr = step.get('selective_hdr', {})
+                if not hdr.get('enabled') or not hdr.get('strength'):
+                    step.pop('selective_hdr', None)
+                else:
+                    hdr['headroom_revision'] = 2
+                    if not hdr.get('relative'):
+                        hdr.pop('relative', None)
+                if not step.get('mask', {}).get('enabled'):
+                    step.pop('mask', None)
+                elif step['mask'].get('upper') == 100:
+                    step['mask'].pop('upper')
                 if step.get('blend_mode') == 'Normal':
                     step.pop('blend_mode')
         if module['kind']=='palette_native':
@@ -55,6 +68,9 @@ def signature(pipeline,state,input_settings,integrated,modules):
                 modules=[{k:(settings_record(m) if k=='settings' else m[k]) for k in ('id','kind','settings','bypass','force','auto_reference') if k in m} for m in modules])
     external={}
     for m in modules:
+        if m['kind'] == 'recombine_stars' and not m['bypass'] and m['settings'].document_title:
+            frame = m.get('stellar_frame')
+            external[m['id']] = frame[0] if frame is not None else 'unavailable'
         if m['kind'] == 'recombine_stars' and not m['bypass'] and m['settings'].path:
             from .star_recombine_inputs import external_signature
             external[m['id']] = external_signature(m['settings'].path)
@@ -80,7 +96,7 @@ def capture(pipeline,state,input_settings,integrated,modules,node_id,cancel=None
 def frame_view(pipeline,settings,divisor):
     if settings.source!=pipeline.fingerprint:raise ValueError('Freeze belongs to another source image')
     image=pipeline.freeze_frames.get(settings.token)
-    if image is None:raise ValueError('Frozen pixels unavailable: reopen the project with its Freeze archive, or update/unlock this Freeze')
+    if image is None:raise ValueError('Frozen pixels unavailable: reopen the project with its Freeze archive, or press Update')
     if divisor==1:return image
     cached=pipeline.freeze_proxies.get(settings.token)
     if cached is None or cached[0]!=divisor:

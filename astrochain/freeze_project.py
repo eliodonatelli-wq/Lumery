@@ -12,7 +12,7 @@ def save_project(pipeline,snapshot,path):
     try:
         if required:
             missing=required-set(pipeline.freeze_frames)
-            if missing:raise ValueError('Frozen pixels unavailable; update or unlock missing Freeze nodes before saving')
+            if missing:raise ValueError('Frozen pixels unavailable; update or remove missing Freeze nodes before saving')
             archive=path.with_name(path.stem+'.freezes-'+uuid.uuid4().hex[:12]+'.npz')
             with archive.open('xb') as stream:
                 archive_created=True

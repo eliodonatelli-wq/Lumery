@@ -30,7 +30,7 @@ def auxiliary_images(pipeline,snapshot,payload):
     if cfg.get('components'):
         modules=snapshot['modules'];index=next((i for i,m in enumerate(modules) if m['id']==cfg.get('palette_source')),None)
         if index is None or modules[index]['kind'] not in ('palette','palette_native') or modules[index]['bypass']:raise ValueError('Select an active Palette module to export Hα, OIII and synthetic SII.')
-        if payload.get('freeze_index') is not None and index<=payload['freeze_index']:raise ValueError('Gas channels before Freeze are not recomputed. Select a Palette after Freeze or unlock Freeze for channel export.')
+        if payload.get('freeze_index') is not None and index<=payload['freeze_index']:raise ValueError('Gas channels before Freeze are not recomputed. Select a Palette after Freeze or bypass Freeze for channel export.')
         ingress=payload['base'] if index==0 else payload['stages'][modules[index-1]['id']]
         if modules[index]['kind']=='palette_native':
             from .palette_native import acquire,stretch_gases
@@ -70,7 +70,7 @@ def save_fits_bundle(pipeline,snapshot,payload,cancel,progress):
     # Validate every conversion before creating any output files.
     for image in images.values():
         if not np.isfinite(image.astype(dtype)).all():raise ValueError('The selected precision causes overflow')
-    recipe=json.dumps(pipeline.serial_project(snapshot),sort_keys=True)
+    recipe=json.dumps(pipeline.serial_project(snapshot,include_mask_pixels=False),sort_keys=True)
     temporary=[];published=[]
     try:
         for name,image in images.items():

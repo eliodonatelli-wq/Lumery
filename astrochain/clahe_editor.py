@@ -33,7 +33,7 @@ class ClaheEditor(InstrumentDialog):
             row.addWidget(slider, 1); row.addWidget(spin); root.addLayout(row)
             self.controls[key] = spin
             self.sliders[key] = slider
-        self.status = QLabel('Non-linear input in [0, 1]. RGB ratios are preserved automatically; exact black stays black. Native calculation may take time on large images.')
+        self.status = QLabel('Finite non-linear input. Out-of-range values are adapted internally. RGB ratios are preserved; exact black stays black. Native calculation may take time on large images.')
         self.status.setWordWrap(True); root.addWidget(self.status)
         row = QHBoxLayout()
         reset = QPushButton('Reset'); reset.clicked.connect(self.reset); row.addWidget(reset)

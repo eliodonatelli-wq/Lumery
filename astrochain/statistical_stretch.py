@@ -89,14 +89,17 @@ def _transfer(data, settings, cancel):
     return out, reference
 
 
-def _curves(data, settings):
+def _curves(data, settings, *, extend=False):
     if not settings.curves or settings.curves_strength == 0:
         return data
     t, c = settings.target, settings.curves_strength
     p3, p4 = .25 * (1. - t) + t, .75 * (1. - t) + t
     xs = (0., .5*t, t, p3, p4, 1.)
     ys = (0., .5*t, t, p3**(1.-c), (p4**(1.-c))**(1.-c), 1.)
-    return np.interp(np.clip(data, 0., 1.), xs, ys).astype(data.dtype)
+    mapped = np.interp(np.clip(data, 0., 1.), xs, ys).astype(data.dtype)
+    if extend:
+        mapped = np.where(data > 1, 1 + (data - 1) * (1 - ys[-2]) / (1 - xs[-2]), mapped)
+    return mapped
 
 
 def _hdr(data, amount, knee):
@@ -111,15 +114,17 @@ def _hdr(data, amount, knee):
     return np.where(data > knee, knee+(1.-knee)*np.clip(f, 0., 1.), data)
 
 
-def _ratio(rgb, luminance, target):
+def _ratio(rgb, luminance, target, *, limit=True):
     gain = np.divide(target, luminance, out=np.zeros_like(target), where=luminance > 1e-12)
     result = rgb * gain[..., None]
+    if not limit:
+        return result
     # One factor per pixel retains chroma when the requested luma exceeds gamut.
     peak = result.max(axis=-1)
     return result / np.maximum(1., peak)[..., None]
 
 
-def _finish(data, settings, cancel, rgb=False, normalize=True):
+def _finish(data, settings, cancel, rgb=False, normalize=True, *, limit=True):
     _check(cancel)
     result = _curves(data, settings)
     if settings.hdr and settings.hdr_amount > 0:
@@ -136,10 +141,10 @@ def _finish(data, settings, cancel, rgb=False, normalize=True):
         maximum = float(result.max())
         if maximum > 0:
             result = result / maximum
-    return np.clip(result, 0., 1.)
+    return np.clip(result, 0., 1.) if limit else result
 
 
-def process(image, settings, cancel=None):
+def process(image, settings, cancel=None, *, selective_hdr=None, hdr_diagnostics=None):
     """Return native pixels and references; never modify or silently rescale input.
 
     Constants are retained with an explicit diagnostic. Median placement refers
@@ -156,34 +161,49 @@ def process(image, settings, cancel=None):
         raise ValueError(f'Statistical Stretch requires pixels in [0, 1]; measured {low:.6g} to {high:.6g}. Adjust upstream range explicitly.')
     # Analysis uses the complete native ingress, never the display proxy.
     data = a.astype(np.float64, copy=False)
+    limit = selective_hdr is None
+    reference_result = None
     references = []
     if a.ndim == 2:
         result, reference = _transfer(data, settings, cancel)
         references.append(reference)
-        result = _finish(result, settings, cancel) if not reference['constant'] else result
+        result = _finish(result, settings, cancel, limit=limit) if not reference['constant'] else result
     elif settings.mode == 'unlinked':
         planes = []
         for channel in range(3):
             plane, reference = _transfer(data[..., channel], settings, cancel)
             planes.append(plane); references.append(reference)
-        result = _finish(np.stack(planes, axis=-1), settings, cancel, rgb=True)
+        result = _finish(np.stack(planes, axis=-1), settings, cancel, rgb=True, limit=limit)
     else:
         linked, reference = _transfer(data, settings, cancel)
         references.append(reference)
-        linked = _finish(linked, settings, cancel, rgb=True)
+        linked = _finish(linked, settings, cancel, rgb=True, limit=limit)
         if settings.mode == 'luma' and settings.luma_blend > 0:
             luminance = data @ LUMA
             stretched, reference = _transfer(luminance, settings, cancel)
             references.append(reference)
             # Match the two curve stages of the installed luma branch.
-            stretched = _finish(stretched, settings, cancel, normalize=False)
-            luma = _curves(_ratio(data, luminance, stretched), settings)
-            if settings.normalize and luma.max() > 0:
+            stretched = _finish(stretched, settings, cancel, normalize=False, limit=limit)
+            luma = _curves(_ratio(data, luminance, stretched, limit=limit), settings, extend=not limit)
+            if not limit:
+                reference_luma = _curves(_ratio(data, luminance, np.clip(stretched, 0., 1.)), settings)
+                if settings.normalize and reference_luma.max() > 0:
+                    maximum = reference_luma.max()
+                    reference_luma = reference_luma / maximum
+                    luma = luma / maximum
+                reference_result = ((1.-settings.luma_blend)*np.clip(linked, 0., 1.)
+                                    + settings.luma_blend*reference_luma)
+            if limit and settings.normalize and luma.max() > 0:
                 luma = luma / luma.max()
             result = (1.-settings.luma_blend)*linked + settings.luma_blend*luma
         else:
             result = linked
     _check(cancel)
+    if not limit:
+        from .selective_hdr import apply_shoulder
+        if reference_result is None:
+            reference_result = np.clip(result, 0., 1.)
+        result = apply_shoulder(data, result, selective_hdr, reference_result, diagnostics=hdr_diagnostics)
     result = np.clip(result, 0., 1.).astype(a.dtype)
     return result, dict(mode='mono' if a.ndim == 2 else settings.mode,
                         references=references, target=settings.target,

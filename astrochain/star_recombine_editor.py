@@ -1,12 +1,16 @@
 """Controls for the shared Recombine Stars preview."""
 import math
+from uuid import uuid4
+
+import numpy as np
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout,
+    QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QInputDialog, QMessageBox,
     QLabel, QLineEdit, QPushButton, QWidget,
 )
 
+from .channel_snapshots import documents
 from .instrument_style import InstrumentDialog
 from .statistical_editor import StretchSlider
 from .star_recombine import MAX_STRETCH, RecombineSettings
@@ -61,6 +65,8 @@ class RecombineEditor(InstrumentDialog):
     def __init__(self, owner, key):
         super().__init__(owner, Qt.WindowType.Tool)
         self.owner, self.key = owner, key
+        self.document_title = ''
+        self.stellar_frame = None
         self.setWindowTitle('Recombine Stars')
         form = QFormLayout(self)
         self.path = QLineEdit(placeholderText='Use upstream Separate Stars')
@@ -69,10 +75,14 @@ class RecombineEditor(InstrumentDialog):
         browse = QPushButton('Choose registered RGB FITS…')
         browse.clicked.connect(self.choose)
         form.addRow(browse)
+        opened = QPushButton('Choose open AstroSuite image…')
+        opened.setEnabled(callable(getattr(owner.ctx, 'list_image_views', None)))
+        opened.clicked.connect(self.choose_document)
+        form.addRow(opened)
         internal = QPushButton('Use upstream Separate Stars')
-        internal.clicked.connect(self.path.clear)
+        internal.clicked.connect(self.use_internal)
         form.addRow(internal)
-        self.external_linear = QCheckBox('External FITS is linear')
+        self.external_linear = QCheckBox('External stellar layer is linear')
         form.addRow(self.external_linear)
         self.mode = QComboBox()
         for label, value in [('Auto', 'auto'), ('Manual', 'manual'), ('Off', 'off')]:
@@ -123,7 +133,7 @@ class RecombineEditor(InstrumentDialog):
         self.mask_contrast.setEnabled(enabled)
         self.attenuation.setEnabled(enabled)
         self.mask_view.setEnabled(enabled and not self.bypass.isChecked())
-        self.external_linear.setEnabled(bool(self.path.text()))
+        self.external_linear.setEnabled(bool(self.path.text() or self.document_title))
         self.strength.setEnabled(self.mode.currentData() == 'manual')
 
     def changed(self):
@@ -144,19 +154,59 @@ class RecombineEditor(InstrumentDialog):
         path, _ = QFileDialog.getOpenFileName(
             self, 'Choose a registered stellar layer', '', 'FITS (*.fit *.fits *.fts)')
         if path:
+            self.document_title = ''
+            self.stellar_frame = None
             self.path.setText(path)
+            self.preview()
+
+    def use_internal(self):
+        self.document_title = ''
+        self.stellar_frame = None
+        self.path.clear()
+        self.changed()
+
+    def choose_document(self):
+        try:
+            entries = list(documents(self.owner.ctx).items())
+            if not entries:
+                raise ValueError('Open a registered RGB stellar layer in AstroSuite first.')
+            labels = [f'{index}. {title}' for index, (_, (title, _)) in enumerate(entries, 1)]
+            selection, accepted = QInputDialog.getItem(
+                self, 'Open stellar layer', 'Registered RGB document', labels, editable=False)
+            if not accepted:
+                return
+            uid, _ = entries[labels.index(selection)]
+            entry = documents(self.owner.ctx).get(uid)
+            if entry is None:
+                raise ValueError('The selected document has closed.')
+            title, document = entry
+            pixels = np.asarray(getattr(document, 'image', None))
+            if (pixels.ndim != 3 or pixels.shape[-1] != 3 or pixels.dtype.kind != 'f'
+                    or not pixels.size or not np.isfinite(pixels).all()):
+                raise ValueError('Select a finite floating-point RGB stellar layer.')
+            frame = np.array(pixels, copy=True)
+            frame.setflags(write=False)
+        except ValueError as exc:
+            QMessageBox.warning(self, 'Recombine Stars', str(exc))
+            return
+        self.document_title = title or 'AstroSuite image'
+        self.stellar_frame = (uuid4().hex, frame)
+        self.path.setText(self.document_title)
+        self.preview()
 
     def settings(self):
-        return RecombineSettings(self.path.text(), self.external_linear.isChecked(),
+        return RecombineSettings(self.path.text() if not self.document_title else '', self.external_linear.isChecked(),
                                  self.mode.currentData(), self.strength.value(),
                                  self.intensity.value(), self.protect.isChecked(),
                                  self.mask_enabled.isChecked(), self.mask_contrast.value(),
-                                 self.attenuation.value() / 100)
+                                 self.attenuation.value() / 100, self.document_title)
 
     def restore(self, settings):
         self.applied_auto = None
         self.status.clear()
-        self.path.setText(settings.path)
+        self.document_title = settings.document_title
+        self.stellar_frame = None
+        self.path.setText(settings.document_title or settings.path)
         self.external_linear.setChecked(settings.external_linear)
         self.mode.setCurrentIndex(self.mode.findData(settings.mode))
         self.strength.setValue(settings.stretch)

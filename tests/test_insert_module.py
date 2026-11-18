@@ -42,5 +42,6 @@ class InsertTests(unittest.TestCase):
   edge=(self.a.key,self.b.key)
   for kind,_ in MODULE_CATALOG:
    node=self.d.canvas.insert_module(kind,edge);edge=(node.key,self.b.key);self.d.timer.stop()
+   if kind=='masks':self.d.editors[node.key].bypass.setChecked(True)
   self.assertEqual(len(self.d.snapshot()['modules']),2+len(MODULE_CATALOG))
 if __name__=='__main__':unittest.main()

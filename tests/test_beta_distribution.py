@@ -73,11 +73,14 @@ class BetaTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(data)) as outer:
             self.assertEqual(len(outer.namelist()), 3)
             self.assertEqual({Path(n).name for n in outer.namelist()},
-                             {'AstroChain_Prototype.py', '_astrochain_lib.zip', 'INSTALL.md'})
-            library = next(n for n in outer.namelist() if n.endswith('_astrochain_lib.zip'))
+                             {'AstroChain_Prototype.py', package_beta.LIBRARY_NAME, 'INSTALL.md'})
+            library = next(n for n in outer.namelist() if n.endswith(package_beta.LIBRARY_NAME))
             with zipfile.ZipFile(io.BytesIO(outer.read(library))) as inner:
                 self.assertEqual(set(inner.namelist()),
-                                 {p.relative_to(ROOT).as_posix() for p in (ROOT/'astrochain').rglob('*.py')})
+                                 {p.relative_to(ROOT).as_posix()
+                                  for package in ('astrochain', 'lumerys_masks')
+                                  for p in (ROOT/package).rglob('*')
+                                  if p.suffix in ('.py', '.json') and '__pycache__' not in p.parts})
                 for name in inner.namelist():
                     self.assertEqual(inner.read(name), (ROOT/name).read_bytes())
 

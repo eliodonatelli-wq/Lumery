@@ -41,6 +41,7 @@ class StarSeparationEditor(InstrumentDialog):
         self.owner, self.ctx, self.key = owner, owner.ctx, key
         self.params = StarSettings()
         self.ingress = None
+        self.preview_source = None
         self.event = None
         self.events = events_type(self)
         self.events.done.connect(self.finished)
@@ -114,6 +115,7 @@ class StarSeparationEditor(InstrumentDialog):
             self.refresh()
         self.exec()
         self.ingress = None
+        self.preview_source = None
         self.owner.schedule()
 
     def show_progress(self, text):
@@ -128,10 +130,11 @@ class StarSeparationEditor(InstrumentDialog):
 
     def refresh(self):
         ready = self.ingress is not None and self.event is None
+        pair = self.pair() if ready and not self.bypass.isChecked() else None
         self.pick.setEnabled(ready)
         self.clear.setEnabled(ready and self.params.crop is not None)
         self.run_button.setEnabled(ready and not self.pick.isChecked() and not self.bypass.isChecked())
-        self.export.setEnabled(ready and not self.bypass.isChecked() and self.ctx is not None and self.pair() is not None)
+        self.export.setEnabled(self.ctx is not None and pair is not None)
         self.cancel_button.setEnabled(self.event is not None)
         self.bypass.setEnabled(self.event is None)
         if self.ingress is None:
@@ -141,7 +144,24 @@ class StarSeparationEditor(InstrumentDialog):
         crop = self.params.crop
         self.selection.setText(f'Full image · {w} × {h} px' if crop is None else
                                f'Crop · x {crop[0]}, y {crop[1]} · {crop[2]-crop[0]} × {crop[3]-crop[1]} px')
-        self.view.set_sky_roi(None if crop is None else (np.asarray(crop) / [w,h,w,h]).tolist())
+        if ready:
+            self.show_preview(pair if not self.pick.isChecked() else None)
+        showing_input = self.preview_source is self.ingress[0]
+        self.view.set_sky_roi((np.asarray(crop) / [w,h,w,h]).tolist()
+                              if showing_input and crop is not None else None)
+
+    def show_preview(self, pair):
+        # Crop coordinates are always picked against the full ingress grid.
+        source, state = (self.ingress[0], self.ingress[3]) if pair is None else (pair.images[0], pair.state)
+        previous = self.preview_source
+        if source is previous:
+            return
+        step = max(1, (max(source.shape[:2]) + 1199) // 1200)
+        proxy, _ = self.owner.pipeline.visualize(source[::step, ::step], state)
+        self.view.show_image(proxy, source.shape)
+        if previous is not None and previous.shape[:2] != source.shape[:2]:
+            self.view.fit()
+        self.preview_source = source
 
     def bypass_changed(self):
         self.owner.schedule()
@@ -212,10 +232,6 @@ class StarSeparationEditor(InstrumentDialog):
             self.status.setText(payload['error'])
         elif self.phase == 'input':
             self.ingress = payload['result']
-            source = self.ingress[0]
-            step = max(1, (max(source.shape[:2])+1199)//1200)
-            proxy,_ = self.owner.pipeline.visualize(source[::step,::step], self.ingress[3])
-            self.view.show_image(proxy, source.shape)
             self.status.setText('Pair ready.' if self.pair() else 'Run separation to feed Starless into the chain.')
         else:
             pair = payload['result']

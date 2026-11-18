@@ -230,4 +230,4 @@ assert sys.argv[2] in astrochain.__file__, astrochain.__file__
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 archive.extractall(folder)
             launcher = next(Path(folder).rglob('AstroChain_Prototype.py'))
-            run(launcher, '_astrochain_lib.zip/astrochain')
+            run(launcher, f'{package_beta.LIBRARY_NAME}/astrochain')

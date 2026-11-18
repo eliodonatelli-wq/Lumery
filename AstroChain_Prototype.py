@@ -1,14 +1,14 @@
 """AstroSuite entrypoint for source checkouts and portable ZIP installs."""
-SCRIPT_NAME = 'Lumerys · Stretch DEV'
+SCRIPT_NAME = 'Lumerys'
 SCRIPT_GROUP = 'Enhancement'
-SCRIPT_VERSION = '0.10.0.stretch12'
+SCRIPT_VERSION = '0.10.0.stretch23.1'
 SCRIPT_DESCRIPTION = 'Serial node editor with suggested OSC/RGB, narrowband, and Foraxx starting workflows.'
 
 def run(ctx):
     import sys
     from pathlib import Path
     root = Path(__file__).resolve().parent
-    library = root / '_astrochain_lib.zip'
+    library = root / '_astrochain_lib_stretch23_masks_r1.zip'
     # A development checkout owns its source package; portable installs use ZIP.
     location = str(root if (root / 'astrochain' / '__init__.py').is_file() else library)
     if location in sys.path:

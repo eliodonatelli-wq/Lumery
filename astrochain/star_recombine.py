@@ -4,8 +4,8 @@ import math
 
 import numpy as np
 
-VERSION = '1.1.0'
-COMPATIBLE_VERSIONS = ('1.0.0', VERSION)
+VERSION = '1.2.0'
+COMPATIBLE_VERSIONS = ('1.0.0', '1.1.0', VERSION)
 MAX_STRETCH = 10000.0
 
 
@@ -20,9 +20,11 @@ class RecombineSettings:
     mask_enabled: bool = False
     mask_contrast: float = 1.0
     attenuation: float = 0.5
+    document_title: str = ''
 
     def __post_init__(self):
-        if (not isinstance(self.path, str) or self.mode not in ('auto', 'manual', 'off')
+        if (not isinstance(self.document_title, str) or not isinstance(self.path, str)
+                or (self.path and self.document_title) or self.mode not in ('auto', 'manual', 'off')
                 or type(self.external_linear) is not bool or type(self.protect) is not bool
                 or type(self.mask_enabled) is not bool or not .25 <= self.mask_contrast <= 4
                 or not 0 <= self.attenuation <= 1

@@ -24,6 +24,8 @@ from .slider_spacing import compact_sliders
 from .node_canvas import MODULE_CATALOG
 from .freeze import FreezeSettings, capture as capture_freeze,signature as freeze_signature
 from .diagnostics import format_error, log_report, report_error
+from lumerys_masks.chain_state import photographic_modules
+from lumerys_masks.universal_mask import resolve_bindings, UnsupportedUniversalMask
 from .foraxx import is_foraxx
 
 class Events(QObject):
@@ -61,8 +63,24 @@ class Job(QRunnable):
                     step if i < count else replace(step, enabled=False)
                     for i, step in enumerate(passes)))
                 modules[-1] = dict(module, settings=settings)
+                if self.s['stretch_mode'] == 'mask':
+                    modules[-1]['mask_preview'] = count - 1
             native_composite = any(m['kind'] == 'recombine_stars' for m in modules)
             payload = self.pipeline.compute_serial(self.s['state'], self.s['ghs'], self.s['integrated'], modules, 1 if self.render or self.s.get('stretch_view') or native_composite else self.s['divisor'], self.cancel, self.events.progress.emit,allow_partial=not self.render and not analysis_only)
+            # Auxiliary masks stay available even when the main preview points
+            # to INPUT/another stage or a Freeze skips their photographic path.
+            if not analysis_only:
+                for index, module in enumerate(self.s['modules']):
+                    if (module['kind'] == 'masks' and not module['bypass']
+                            and module['settings'].automatic.enabled
+                            and module['id'] not in payload.get('diagnostics', {})):
+                        auxiliary = self.pipeline.compute_serial(
+                            self.s['state'], self.s['ghs'], self.s['integrated'],
+                            self.s['modules'][:index+1], 1, self.cancel,
+                            self.events.progress.emit, allow_partial=True)
+                        diagnostic = auxiliary.get('diagnostics', {}).get(module['id'])
+                        if diagnostic is not None:
+                            payload.setdefault('diagnostics', {})[module['id']] = diagnostic
             result.update(payload)
             if native_composite and not self.render:
                 result['native_composite'] = True
@@ -96,6 +114,11 @@ class Job(QRunnable):
                 if self.s.get('stretch_view'):
                     _, index, picking = self.s['stretch_view']
                     mode = self.s['stretch_mode'].capitalize()
+                    if mode == 'Mask':
+                        mask = payload['diagnostics'].get(key, {}).get('mask')
+                        if mask is None:
+                            raise ValueError('The Stretch mask preview is unavailable.')
+                        raw, state = mask, 'nonlinear'
                     result['solo_label'] = f'{mode} pass {index + 1}' + (' · click to set GHS symmetry' if picking else '')
                     if self.s['divisor'] != 1:
                         from .model import reduce_image
@@ -135,7 +158,7 @@ class FreezeJob(QRunnable):
     def run(self):
         try:
             self.events.progress.emit('Freeze · calculating at full resolution…')
-            settings=capture_freeze(self.pipeline,self.s['state'],self.s['ghs'],self.s['integrated'],self.s['modules'],self.key,self.cancel,lambda text:self.events.progress.emit(english_message(text)))
+            settings=capture_freeze(self.pipeline,self.s['state'],self.s['ghs'],self.s['integrated'],photographic_modules(self.s['modules']),self.key,self.cancel,lambda text:self.events.progress.emit(english_message(text)))
             result=dict(settings=settings)
         except Cancelled:result=dict(cancelled=True)
         except Exception as exc:
@@ -552,9 +575,16 @@ class ChainDialog(InstrumentDialog):
     def add_module(self,node):
         settings=StatisticalSettings() if node.kind=='statistical' else ClaheSettings() if node.kind=='clahe' else NativePaletteSettings() if node.kind=='palette_native' else FreezeSettings() if node.kind=='freeze' else CurveSettings() if node.kind=='curves' else self.pipeline.initial if node.kind=='ghs' else dynamics.Settings(mode='multiband') if node.kind=='compressor' else ParametricSettings() if node.kind=='parametric' else FilamentSettings() if node.kind=='filament' else PaletteSettings() if node.kind=='palette' else ColorSettings() if node.kind=='colors' else EqualizerSettings()
         self.kinds[node.key]=node.kind
-        if node.kind=='separate_stars':
+        if node.kind=='masks':
+            from lumerys_masks.chain_editor import MaskNodeEditor
+            self.editors[node.key]=MaskNodeEditor(self,node.key,node.serial)
+        elif node.kind=='separate_stars':
             from .star_separation_editor import StarSeparationEditor
-            self.editors[node.key]=StarSeparationEditor(self,node.key,Events)
+            class PhotoInputSeparationEditor(StarSeparationEditor):
+                def current_input(self):
+                    state, settings, integrated, upstream, module = super().current_input()
+                    return state, settings, integrated, photographic_modules(upstream), module
+            self.editors[node.key]=PhotoInputSeparationEditor(self,node.key,Events)
         elif node.kind=='recombine_stars':
             from .star_recombine_editor import RecombineEditor
             self.editors[node.key]=RecombineEditor(self,node.key)
@@ -606,14 +636,24 @@ class ChainDialog(InstrumentDialog):
             if editor is not None:
                 self.request_freeze(editor)
                 if self.busy:return True
+        if self.loading or self.canvas.connection_error or self.resolved_state()=='unknown':
+            return False
+        try:
+            nodes = self.canvas.ordered_modules(require_output=False)
+        except ValueError:
+            return False
+        for node in nodes:
+            if node.kind!='freeze':continue
+            editor=self.editors[node.key]
+            if editor.auto_capture and not editor.bypass.isChecked():
+                self.request_freeze(editor)
+                if self.busy:return True
         return False
-    def cancel_freeze_request(self,editor):
-        self.freeze_queue=[key for key in self.freeze_queue if key!=editor.key]
-        if self.active_freeze==editor.key:self.cancel_token.set()
     def request_freeze(self,editor):
         if self.busy:
             if self.active_freeze==editor.key:
                 editor.set_phase('CAPTURING','Capturing at full resolution…');return
+            editor.auto_capture=False
             if editor.key not in self.freeze_queue:self.freeze_queue.append(editor.key)
             editor.set_phase('QUEUED','Request queued · Freeze will start when the current calculation finishes.')
             self.status.setText('Freeze queued: wait for the capture to finish.');return
@@ -624,7 +664,7 @@ class ChainDialog(InstrumentDialog):
         except ValueError as exc:
             self.status.setText(str(exc));editor.set_phase('LIVE',str(exc));return
         self.timer.stop();self.pending=False;self.busy=True;self.active_freeze=editor.key;self.cancel_token=threading.Event()
-        generation=editor.capture_generation;editor.set_phase('CAPTURING','Capturing at full resolution…')
+        editor.auto_capture=False;editor.set_phase('CAPTURING','Capturing at full resolution…')
         self.cancel_button.setEnabled(True);self.render_button.setEnabled(False);self.export_button.setEnabled(False)
         events=Events(self);self.freeze_events=events;events.progress.connect(self.status.setText)
         def finished(result):
@@ -633,7 +673,7 @@ class ChainDialog(InstrumentDialog):
             if present:
                 if result.get('error'):
                     editor.restore(editor.settings());editor.status.setText('Capture failed: '+result['error']);self.status.setText('Freeze: '+result['error'])
-                elif result.get('cancelled') or generation!=editor.capture_generation:
+                elif result.get('cancelled'):
                     editor.restore(editor.settings());self.status.setText('Freeze cancelled · previous capture retained.')
                 else:
                     editor.restore(result['settings']);editor.bypass.setChecked(False)
@@ -665,17 +705,21 @@ class ChainDialog(InstrumentDialog):
         for node in active_nodes:
             if node.kind in ('palette','palette_native'):self.palette_source.addItem(MODULE_NAMES[node.kind]+' · '+str(node.serial),node.key)
         self.palette_source.setCurrentIndex(max(0,self.palette_source.findData(source)));self.schedule()
-    def snapshot(self,require_output=True):
+    def snapshot(self,require_output=True,mask_pixels=False):
         from .wiring import ordered_ids
         active,complete=ordered_ids([node.key for node in self.canvas.modules],self.canvas.edges,require_output)
         modules=[]
         for node in self.canvas.modules:
             editor=self.editors[node.key]
             modules.append(dict(id=node.key,kind=node.kind,settings=editor.settings(),bypass=editor.bypass.isChecked(),force=editor.force.isChecked() if node.kind in ('ghs','statistical') else False,position=[node.pos().x(),node.pos().y()]))
-            if node.kind=='recombine_stars':modules[-1]['mask_view']=editor.mask_view.isChecked()
+            if node.kind=='masks' and mask_pixels:
+                modules[-1]['settings']=editor.settings_for_project()
+            if node.kind=='recombine_stars':
+                modules[-1].update(mask_view=editor.mask_view.isChecked(), stellar_frame=editor.stellar_frame)
             if node.kind=='parametric':modules[-1]['solo']=editor.solo_band
             if node.kind=='compressor':modules[-1].update(auto_reference=editor.auto_reference.isChecked(),spectrum=editor.graphs_toggle.isChecked())
         graph_modules=modules;by_id={module['id']:module for module in modules};modules=[by_id[key] for key in active]
+        resolve_bindings(modules)  # Reject unsupported paths before any auxiliary operation strips masks.
         return dict(graph_modules=graph_modules,wiring_incomplete=not complete,exports=dict(components=self.export_components.isChecked(),rgb=self.export_rgb.isChecked(),palette_source=self.palette_source.currentData()),revision=self.revision,state_index=self.state.currentIndex(),state=self.resolved_state(),ghs=self.pipeline.initial,integrated=False,display_auto=self.display_auto.isChecked(),preview_point=self.point.currentData(),modules=modules,connections=[list(edge) for edge in self.canvas.edges],endpoints={node.key:[node.pos().x(),node.pos().y()] for node in (self.canvas.input,self.canvas.output)},divisor=(1,2,4,8)[self.resolution.currentIndex()],format=self.format.currentText(),path=self.path.text())
     def refresh_compatibility(self):
         state=self.resolved_state()
@@ -716,18 +760,37 @@ class ChainDialog(InstrumentDialog):
         picker = getattr(self, 'stretch_picker', None)
         if picker is not None and self.point.findData(picker.key) < 0:
             picker.pick.setChecked(False)
+        mask_editor = getattr(self, 'stretch_mask_editor', None)
+        if mask_editor is not None and self.point.findData(mask_editor.key) < 0:
+            mask_editor.rows[mask_editor.details.currentIndex()].show_mask.setChecked(False)
+        if not getattr(self, '_invalidating_masks', False):
+            self._invalidating_masks = True
+            try:
+                for editor in self.editors.values():
+                    if editor.kind == 'masks':
+                        editor.invalidate()
+            finally:
+                self._invalidating_masks = False
         self.refresh_compatibility()
         if self.pipeline.star_pairs and not self.busy:
             from .star_node import valid_pair
             try:
                 snapshot=self.snapshot(require_output=False)
                 modules=snapshot['modules']
+            except UnsupportedUniversalMask as exc:
+                # Do not discard an existing stellar pair for an unsupported
+                # mask path; invalidate queued previews and leave pixels intact.
+                self.revision += 1
+                self.pending = False
+                self.timer.stop()
+                self.show_error(str(exc))
+                return
             except ValueError:
                 modules=[]
             valid=set()
             for index,module in enumerate(modules):
                 if module['kind']=='separate_stars' and valid_pair(
-                    self.pipeline,snapshot['state'],snapshot['ghs'],snapshot['integrated'],modules[:index],module
+                    self.pipeline,snapshot['state'],snapshot['ghs'],snapshot['integrated'],photographic_modules(modules[:index]),module
                 ):
                     valid.add(module['id'])
             for key in set(self.pipeline.star_pairs)-valid:
@@ -738,6 +801,7 @@ class ChainDialog(InstrumentDialog):
         if self.resolved_state()=='unknown':self.pending=False;self.status.setText('Open INPUT and confirm the image data state.');return
         self.start(False)
     def start(self,render,output_format=None):
+        if self.launch_pending_freeze():return
         try:
             snapshot=self.snapshot(require_output=render)
             if output_format is not None:snapshot['format']=output_format
@@ -745,16 +809,22 @@ class ChainDialog(InstrumentDialog):
             self.pending=False;self.show_error(str(exc));return
         if not render:
             picker = getattr(self, 'stretch_picker', None)
-            if picker is not None:
-                snapshot['preview_point'] = picker.key
+            mask_editor = getattr(self, 'stretch_mask_editor', None)
+            preview_editor = picker or mask_editor
+            if preview_editor is not None:
+                snapshot['preview_point'] = preview_editor.key
             editor = self.editors.get(snapshot['preview_point'])
             if editor is not None and editor.kind == 'stretch':
                 picking = getattr(self, 'stretch_picker', None) is editor
-                mode = 'before' if picking else editor.preview.currentData()
+                mode = editor.preview.currentData()
+                if picking:
+                    mode = 'before'
+                elif mask_editor is editor:
+                    mode = 'mask'
                 if mode != 'final':
                     index = editor.details.currentIndex()
                     snapshot['stretch_view'] = (editor.key, index, picking)
-                    snapshot['stretch_count'] = index + (mode == 'after')
+                    snapshot['stretch_count'] = index + (mode in ('after', 'mask'))
                     snapshot['stretch_mode'] = mode
                     if picking:
                         snapshot['divisor'] = 1
@@ -804,7 +874,9 @@ class ChainDialog(InstrumentDialog):
         if not payload.get('error') and (payload.get('render') or payload.get('snapshot',{}).get('revision')==self.revision):
             for key,diagnostic in payload.get('diagnostics',{}).items():
                 editor=self.editors.get(key)
-                if editor is not None and editor.kind in ('statistical','compressor','parametric','filament','palette','palette_native','curves','freeze','recombine_stars'):editor.update_diagnostics(diagnostic)
+                if editor is not None and editor.kind == 'masks':
+                    editor.accept_diagnostic(diagnostic, payload.get('snapshot',{}).get('revision'))
+                if editor is not None and editor.kind in ('stretch','statistical','compressor','parametric','filament','palette','palette_native','curves','freeze','recombine_stars'):editor.update_diagnostics(diagnostic)
         if payload.get('display_only'):
             self.busy=False;self.render_button.setEnabled(True);self.export_button.setEnabled(True)
             if payload['epoch']==self.display_epoch and payload['revision']==self.revision:
@@ -826,7 +898,7 @@ class ChainDialog(InstrumentDialog):
                 if payload['snapshot']['format']=='Documento AstroSuite':
                     if self.ctx is None:raise ValueError('Use FITS export outside AstroSuite.')
                     from .outputs import output_metadata
-                    meta=output_metadata(self.pipeline,payload['snapshot'],payload,'',payload['output']);meta['astrochain']=self.pipeline.serial_project(payload['snapshot']);meta['astrochain']['result_state']=payload['output_state']
+                    meta=output_metadata(self.pipeline,payload['snapshot'],payload,'',payload['output']);meta['astrochain']=self.pipeline.serial_project(payload['snapshot'],include_mask_pixels=False);meta['astrochain']['result_state']=payload['output_state']
                     self.ctx.open_new_document(payload['output'],metadata=meta,name='AstroChain Result')
                     for name,image in payload.get('auxiliary',{}).items():
                         channel_meta=output_metadata(self.pipeline,payload['snapshot'],payload,name,image);channel_meta['astrochain']=deepcopy(meta['astrochain']);channel_meta['CHANNEL']=name;channel_meta['SYNTHSII']=name.startswith('SII_Synthetic')
@@ -980,7 +1052,7 @@ class ChainDialog(InstrumentDialog):
         if not path:return
         try:
             from .freeze_project import save_project
-            save_project(self.pipeline,self.snapshot(require_output=False),path)
+            save_project(self.pipeline,self.snapshot(require_output=False,mask_pixels=True),path)
         except Exception as exc:
             report_error(self.ctx, exc, 'project')
             QMessageBox.warning(self,'Project',str(exc))

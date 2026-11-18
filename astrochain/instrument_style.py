@@ -90,6 +90,8 @@ class MetalPanel(QWidget):
 
 class InstrumentDialog(QDialog):
     def paintEvent(self, event):
+        if self.property("embeddedStretchPanel"):
+            return
         painter = QPainter(self)
         paint_metal(painter, self.rect(), 'panel' if self.property('instrumentInspector') else 'frame', 6)
         painter.end()

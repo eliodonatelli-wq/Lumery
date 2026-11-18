@@ -1,6 +1,44 @@
-# Lumerys — Experimental Separation Development Preview
+# Lumerys — Installation and reference
 
-Version: `0.10.0.stretch12`
+Version: `0.10.0.stretch23.1`
+
+## Masks
+
+Insert **Masks** immediately before the photographic node it should control.
+**Enable Mask** enables the association. **Mask Strength** scales the
+effect from 0% to 100% without changing the mask pixels or Brush Level. Curves,
+CLAHE, and other photographic modules farther downstream receive the processed
+image. Freeze and stellar nodes can appear later in the chain. Their direct
+application as mask recipients is unsupported.
+
+Use **Paint Level** to paint a grayscale value. **Brush Level** sets the value
+from 0% (black) to 100% (white). The brush also offers **Erase**, **Restore**,
+and **Pan**. Shift + wheel adjusts brush size. The wheel alone zooms.
+Undo, Redo, and Reset Corrections are available in the editor. Projects save
+the mask settings and corrections. **Copy Mask** uses Lumerys' session clipboard.
+
+## Selective HDR
+
+New passes default to Relative to pass input, using its native luminance maximum as 100%. Existing saved thresholds retain their scale.
+
+Optional per pass, with Threshold on the pass input and a soft shoulder on
+the mapped peak. Strength zero bypasses the shoulder. For evaluation, use
+Normal at 100% opacity. Later blend modes and passes can consume headroom.
+GHS output curves with flat segments or a zero final tangent are rejected.
+The shoulder affects only pixels above the input threshold. The inspector
+reports limited headroom when the unselected output is already near white. Existing projects open with Selective HDR disabled.
+
+
+## Stretch luminance masks
+
+The grayscale reference spans both thresholds. Highlight Threshold fades out
+the upper edge using Tonal Feather. At 100% it preserves the original mask.
+
+Each pass has an optional mask derived from the luminance of its stretch result.
+Black Threshold and Tonal Feather shape the transition. Spatial Blur is the
+Gaussian sigma in native pixels and affects only the mask. Show Mask previews
+the grayscale map before pass opacity. Existing projects open with masks off.
+
 
 ## Separate Stars
 
@@ -12,7 +50,7 @@ images in the node input tonal domain as independent AstroSuite documents. If th
 crop changes, run the separation again. Saved projects retain the crop and
 wiring. Run separation again after reopening a project.
 
-## Stretch development preview
+## Stretch passes
 
 Add **Stretch** from the node menu. Select a pass to edit its controls. Each
 pass can use GHS or Statistical Stretch, and has its own On switch and opacity.
@@ -27,8 +65,7 @@ operands clipped to [0, 1], then mix with the original input at the chosen
 opacity. In mono, Color uses the bounded input and Luminosity the bounded
 stretch result. Sigmoid uses the AstroSuite default center and strength.
 
-Use a separate scripts folder for this preview. Existing GHS and Statistical
-nodes remain available and existing projects keep their original nodes.
+Existing GHS and Statistical nodes remain available and existing projects keep their original nodes.
 
 ## GHS automatic starting level
 
@@ -200,22 +237,21 @@ No separate Python installation is required by this plugin when SASpro provides
 its own runtime. Do not install packages into SASpro automatically or copy Qt,
 DLLs, or native Python modules from another computer.
 The script API must provide get_image(), active_document(), and
-open_new_document(). A minimum supported SASpro release is not yet established;
-include your SASpro version in beta feedback.
+open_new_document(). A minimum supported SASpro release is not yet established.
+
+Separate Stars additionally needs the host's OpenCV Python module (`cv2`) for
+TIFF I/O and a configured StarNet 2.1 executable with `StarNet2_weights.pt`
+beside it. StarNet and its weights are supplied separately.
 
 ## Installation — macOS and Windows
 
-1. Close any open Lumerys panel in AstroSuite Pro.
-2. Extract the outer beta ZIP. Keep the launcher and `_astrochain_lib.zip`
-   together in their supplied folder. Do not extract the inner library ZIP.
-3. In AstroSuite Pro, choose **Scripts → Open Scripts Folder**.
-4. Place the supplied plugin folder inside that directory. Do not replace any
-   existing plugin or remove earlier versions without deciding how to retain them.
-   If an identical folder already exists, stop rather than overwrite it.
-5. Choose **Scripts → Reload Scripts**. If the new version is not picked up,
-   restart AstroSuite Pro. Avoid opening multiple Lumerys versions together.
-6. Open and select an image, then choose **Lumerys · Stretch DEV** in the
-   Enhancement script group.
+1. Close AstroSuite Pro.
+2. Extract the distribution ZIP. Keep `AstroChain_Prototype.py` and
+   `_astrochain_lib_stretch23_masks_r1.zip` together in the extracted folder.
+   Leave the inner ZIP intact.
+3. Move any previous Lumerys script folders outside the scripts directory
+   for rollback. Place the extracted folder inside the scripts directory.
+4. Start AstroSuite Pro, open an image, and choose **Enhancement → Lumerys**.
 
 The usual script locations are:
 
@@ -249,8 +285,7 @@ visibility then depends on the host's logging configuration. No log file is
 created and no report is transmitted automatically.
 
 Send the diagnostic together with your SASpro version, OS version/architecture,
-steps to reproduce, expected result, and observed result to the beta organizer
-through the agreed private channel. Inspect screenshots and any copied host log
+steps to reproduce, expected result, and observed result through your agreed support channel. Inspect screenshots and any copied host log
 before sharing: unrelated AstroSuite messages or on-screen errors may contain
 personal paths. Do not send images, FITS headers, saved sessions, or Freeze files
 unless separately requested and explicitly approved by you.

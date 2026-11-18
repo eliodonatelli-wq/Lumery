@@ -1,46 +1,19 @@
-# Lumerys · Statistical Stretch Preview — 0.10.0.ghsauto1
+# Lumerys — Stretch 23.1
 
-Statistical Stretch is available as an independent chain module and as a method
-for each gas in Palette Studio → Signals. The existing asinh path and old
-recipes remain compatible. See [INSTALL_BETA.md](INSTALL_BETA.md) for controls,
-range contracts, deliberate differences from SASpro and validation limits.
-
-The optional Camera / filter profiles mode adds versioned response snapshots,
-six camera records, standard-filter graph data, qualified automatic Hbeta
-separation, and numeric custom profiles (CSV / explicit line samples).
-Incomplete candidates remain explicit and never pretend to be supported.
-Matrix (current) stays the default and the original spectral1 ASI585/L-eXtreme
-path remains separate and numerically unchanged. See [INSTALL_BETA.md](INSTALL_BETA.md)
-for profile availability, import format, data assumptions and test instructions.
-
-Palette Studio now offers **RGB extraction → ASI585 / L-eXtreme (experimental)**
-in Signals / mixing. The current matrix stays the default. Confirm ASI585MC / Air
-and the standard L-eXtreme 7 nm before enabling this visual separation; no other
-sensor/filter profile is supported. It retains the tested 30% background rule,
-not the diagnostic 100% sky subtraction. This is not calibrated gas photometry.
-Saved projects retain the method and invalidate cached results when it changes.
-See [INSTALL_BETA.md](INSTALL_BETA.md) for comparison steps and limitations.
-
-This development worktree contains the approved brushed-metal instrument interface
-and its completion across all module inspectors. See [UI_REVIEW.md](UI_REVIEW.md)
-for the visual scope, checks and remaining host validation. The new CLAHE node extends the processing chain; existing module engines remain unchanged.
-
-Isolated development version. The new **Palette Studio** node is a module in the
-Lumerys chain. The old **Nebula Palette** node is no longer available for
-new insertions; it can still be loaded from saved projects for compatibility.
-The instrument UI uses the existing `lumerys_palette_native_dev` installation;
-the previous version is retained for recovery and standalone plugins stay separate.
+Lumerys is a node-based astrophotography workflow for AstroSuite Pro. Use it
+to stretch images, apply masks, adjust color and contrast, separate and
+recombine stars, and compose narrowband palettes.
 
 ## Getting started
 
-Close the Lumerys panel, select **Reload Scripts** in SASpro, and open
-**Lumerys · Palette Native DEV**. Add **Palette Studio** and connect
-INPUT → Palette Studio → OUTPUT. Confirm the image state in INPUT.
-Bypass is available on the node and in its panel. Reset all restores the defaults.
-The result is opened through the shared Render action or saved through the shared Export FITS action.
-To remove this DEV installation, delete only the `lumerys_palette_native_dev` folder
-from the scripts directory and reload the scripts. The previous build can be restored
-from the backup archive retained in the local reports folder; backups are not tracked in Git.
+Install the ZIP as described in [the installation guide](INSTALL_BETA.md),
+restart AstroSuite Pro, open an image, and choose **Enhancement → Lumerys**.
+Confirm the input state in **INPUT**, then build a chain or choose a suggested
+workflow. **Render** opens a new document and **Export FITS** saves the result.
+
+Try **INPUT → Stretch → Masks → Curves → CLAHE → OUTPUT**. Masks applies to
+Curves. CLAHE receives the resulting image and applies its own settings.
+See the [Masks controls and compatibility notes](INSTALL_BETA.md#masks).
 
 ## Suggested starting workflow
 
@@ -156,64 +129,28 @@ The project saves paths and fingerprints; loading is
 rejected if the files have changed. FITS files are not embedded in the project:
 keep them with your data. No source image file is modified.
 
-## Validation and limitations
+## Validation and packaging
 
-UI 3 extends the instrument finish and English presentation across every module
-inspector. Validation includes 235 regression tests, 39 Qt screenshots, unchanged
-scientific preview pixels for a matched FITS comparison, and selected live SASpro
-checks. See [UI_REVIEW.md](UI_REVIEW.md) for exact coverage and the final installed
-library recheck; this does not certify all host workflows or Windows.
+Stretch 23.1 passed the 102-test candidate suite and was tested in AstroSuite
+on macOS with Masks, Curves, CLAHE, Separate Stars, and Recombine Stars.
+Interactive Windows validation is pending.
 
-See the local reports/final_tests.log, reports/real_verification.json, and reports/integrity.json.
-These generated reports are excluded from Git. Recorded automated checks cover the
-numerical engine, matrices, curves, synthesis, signed data, masks,
-resolutions, bypass, reset, serialization, FITS input, rendering with a simulated host,
-display-only masks, and export through shared services.
+The distribution includes the launcher, the verified library ZIP, and the
+installation guide. Keep the launcher and library ZIP side by side. A source
+checkout includes both Python packages at the repository root. Run
+`python package_beta.py` to build a ZIP from source, or pass
+`--verified-library PATH` to package an existing library ZIP after checking it
+against the checkout. The command leaves the AstroSuite installation untouched.
+See [requirements](INSTALL_BETA.md#requirements) for host dependencies.
 
-Real-data verification: a stored astronomical input of 2021×2922 pixels, full HOO;
-1/2,1/4,1/8 previews identical to the downsampled Full result. The comparison PNG contains a
-central crop: original | HOO | SHO with artificial SII, using the same display scale.
-The quality of sky protection on that field has not been certified.
-
-UI tests were run offscreen on the Mac using Qt from the development runtime.
-Beta 2 passed 226 automated tests, including 10 review regression tests and
-launcher checks for both the source checkout and portable package. After
-installation on the user's Mac, the user tested it inside AstroSuite on
-2026-10-31, reported that everything appeared correct, and accepted beta 2 as
-the current version. This is user-reported live validation, not an exhaustive
-host test matrix. The previous DEV15 installation is retained outside the active
-Scripts directory for recovery. A second Mac and Windows remain unverified.
-This beta is not a production release.
-
-## Files and reproduction
-
-For the packaged installation, keep `AstroChain_Prototype.py` and `_astrochain_lib.zip`
-together; do not extract the internal ZIP. The portable beta package contains the
-launcher, library ZIP, and installation instructions. Generated ZIPs and reports
-are not tracked in Git. In a source checkout, `astrochain/` is directly at the
-repository root and takes priority over any historical library ZIP beside it.
-Build the portable package with `python package_beta.py`; it never overwrites an
-existing package or changes the host installation.
-Dependencies: Python 3.12, NumPy, SciPy, PyQt6, pyqtgraph, and
-Astropy (for FITS input/export). Palette Studio introduces no additional library requirement for SASpro.
-
-To run the dedicated numerical tests from the repository root with these dependencies:
-`PYTHONPATH=. QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -p 'test_palette_native.py'`
-For the full local suite, use `PYTHONPATH=. QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests`.
-It also includes comparisons against original modules and plugin ZIPs in the local SASpro
-scripts installation; those references are not included in this repository.
-The local report records the suite's execution. `verify_real.py` additionally requires
-an external astronomical input from the adjacent Chain Studio workspace.
-The current `build_release.py` is a historical, environment-specific packaging and
-installation script; it depends on adjacent development files, local logs, and an
-existing SASpro installation and is not a standalone build command for a fresh clone.
+The repository tests can be run with `QT_QPA_PLATFORM=offscreen python -m pytest`.
+Some historical comparisons need reference modules from the original AstroSuite
+plugins. See [UI_REVIEW.md](UI_REVIEW.md) for the earlier instrument panel review.
 
 ## CLAHE module
 
 Insert CLAHE after a stretch (for example INPUT → Adaptive GHS → CLAHE → OUTPUT).
-Already stretched images can use INPUT → CLAHE → OUTPUT. Only active, nonzero
-CLAHE requires non-linear input in [0, 1]; out-of-range or nonfinite values are
-reported without automatic normalization or clipping.
+Already stretched images can use INPUT → CLAHE → OUTPUT. Active, nonzero CLAHE requires non-linear, finite input. It adapts the internal histogram range for signed or over-range values.
 
 - **Local scale**: tile side as 2–100% of the native image short side (default 12.5%).
 - **Contrast limit**: histogram cap relative to mean bin population, 1–16× (default 2×).
@@ -234,5 +171,4 @@ processing can still introduce its documented preview/render differences.
 
 Settings and the CLAHE engine version round-trip with projects, including bypass
 and node connections. Older projects without CLAHE remain readable. The existing
-Render, Export FITS and Freeze services operate on the new node. Live host
-render/export and visual quality on astronomical fields require separate review.
+Render, Export FITS and Freeze services operate on the new node.

@@ -85,19 +85,23 @@ class FreezeUiTests(unittest.TestCase):
  def wait(self):
   from PyQt6.QtCore import QEventLoop,QTimer
   loop=QEventLoop();timer=QTimer();timer.timeout.connect(lambda:loop.quit() if not self.d.busy and not self.d.pending and not self.d.timer.isActive() else None);timer.start(10);QTimer.singleShot(5000,loop.quit);loop.exec();timer.stop();self.assertFalse(self.d.busy)
- def test_worker_capture_duplicate_unlock_and_independent_update(self):
-  e=self.d.editors[self.f.key];self.d.request_freeze(e);self.wait();token=e.settings().token;self.assertTrue(token);self.assertEqual(self.d.pipeline.freeze_frames[token].shape,self.d.pipeline.source.shape)
-  e.duplicate();self.d.timer.stop();other=self.d.editors[self.d.canvas.modules[-1].key];self.assertEqual(other.settings().token,token)
-  e.unlock();self.d.timer.stop();self.assertIn(token,self.d.pipeline.freeze_frames);self.assertEqual(other.settings().token,token)
-  self.d.request_freeze(e);self.wait();self.assertNotEqual(e.settings().token,other.settings().token)
-  node=self.d.canvas.modules[-1];self.d.canvas.remove_module(node);self.d.timer.stop();self.assertNotIn(token,self.d.pipeline.freeze_frames);self.assertIn(e.settings().token,self.d.pipeline.freeze_frames)
+ def test_auto_capture_bypass_and_independent_update(self):
+  e=self.d.editors[self.f.key];self.d.start(False);self.wait()
+  token=e.settings().token;self.assertTrue(token);self.assertEqual(self.d.pipeline.freeze_frames[token].shape,self.d.pipeline.source.shape)
+  node=self.d.canvas.add_module('freeze');other=self.d.editors[node.key];self.wait()
+  other_token=other.settings().token;self.assertTrue(other_token);self.assertNotEqual(other_token,token)
+  e.bypass.setChecked(True);self.wait();self.assertIn(token,self.d.pipeline.freeze_frames)
+  self.d.request_freeze(e);self.wait();self.assertFalse(e.bypass.isChecked());self.assertNotEqual(e.settings().token,token)
+  self.assertEqual(other.settings().token,other_token)
+  self.d.canvas.remove_module(node);self.d.timer.stop();self.assertNotIn(other_token,self.d.pipeline.freeze_frames)
+  self.assertIn(e.settings().token,self.d.pipeline.freeze_frames)
  def test_project_ui_sidecar_keeps_capture(self):
   from PyQt6.QtWidgets import QFileDialog
   e=self.d.editors[self.f.key];self.d.request_freeze(e);self.wait();token=e.settings().token
   with tempfile.TemporaryDirectory() as folder:
    path=str(Path(folder)/'freeze.json')
    with patch.object(QFileDialog,'getSaveFileName',return_value=(path,'')):self.d.save_project()
-   self.assertTrue(Path(path).exists());e.unlock();self.d.timer.stop();self.assertNotIn(token,self.d.pipeline.freeze_frames)
+   self.assertTrue(Path(path).exists());self.d.canvas.remove_module(self.f);self.d.timer.stop();self.assertNotIn(token,self.d.pipeline.freeze_frames)
    with patch.object(QFileDialog,'getOpenFileName',return_value=(path,'')):self.d.load_project()
    self.d.timer.stop();self.assertIn(token,self.d.pipeline.freeze_frames);self.assertEqual(self.d.editors[self.f.key].settings().token,token)
  def test_unconnected_freeze_does_not_capture_other_path(self):

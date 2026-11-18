@@ -41,13 +41,21 @@ class ClaheTests(unittest.TestCase):
             self.assertTrue(np.isfinite(process(b,self.settings)).all())
 
     def test_invalid_input_and_parameters(self):
-        for value in (-.01,1.01,float('nan'),float('inf')):
+        for value in (float('nan'),float('inf')):
             a=self.value.copy();a[0,0]=value
             with self.assertRaisesRegex(ValueError,'finite pixels'):process(a,self.settings)
         for kwargs in (dict(scale=0),dict(limit=17),dict(amount=-1),dict(scale=float('nan')),dict(limit=True)):
             with self.assertRaises(ValueError):ClaheSettings(**kwargs)
         for shape in ((0,4),(3,3,4),(3,)):
             with self.assertRaises(ValueError):process(np.zeros(shape),self.settings)
+
+    def test_signed_and_extended_finite_input(self):
+        source = self.value * 12 - .8
+        result = process(source, self.settings)
+        self.assertTrue(np.isfinite(result).all())
+        self.assertLess(result.min(), 0)
+        self.assertGreater(result.max(), 1)
+        self.assertFalse(np.array_equal(result, source))
 
     def test_cancellation_during_calculation(self):
         class Cancel:

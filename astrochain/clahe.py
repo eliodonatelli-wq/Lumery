@@ -1,4 +1,4 @@
-"""Native float CLAHE with a shared RGB gain and no implicit normalization."""
+"""Native float CLAHE with a shared RGB gain and internal range adaptation."""
 from dataclasses import dataclass
 import numpy as np
 
@@ -25,7 +25,8 @@ def process(image, settings, cancel=None):
     """Equalize HSV value; blend through one gain, retaining RGB ratios.
 
     Histograms have a fixed 0..1 axis. Tile CDFs are interpolated spatially
-    and in intensity. Exact black remains black because its RGB ratio is undefined.
+    and in intensity. Out-of-range data use peak magnitude on this axis.
+    Exact black remains black because its RGB ratio is undefined.
     """
     def check():
         if cancel is not None and cancel.is_set():
@@ -37,11 +38,31 @@ def process(image, settings, cancel=None):
     a = np.asarray(image)
     if a.ndim not in (2, 3) or (a.ndim == 3 and a.shape[-1] != 3) or not a.size or min(a.shape[:2]) < 1:
         raise ValueError('CLAHE requires a non-empty monochrome or RGB image')
-    if not np.isfinite(a).all() or a.min() < 0 or a.max() > 1:
-        raise ValueError('CLAHE requires finite pixels in [0, 1]. Adjust upstream data; no automatic normalization or clipping is applied.')
-    value = np.max(a, axis=-1) if a.ndim == 3 else a
+    if not np.isfinite(a).all():
+        raise ValueError('CLAHE requires finite pixels. Input contains NaN or infinity.')
+    low, high = float(a.min()), float(a.max())
+    rgb = a.ndim == 3
+    value = np.max(a, axis=-1) if rgb else a
+    adapted = low < 0 or high > 1
+    if adapted and low < 0:
+        if value.dtype.kind != 'f':
+            value = value.astype(np.float64)
+        if rgb:
+            np.maximum(value, np.negative(np.min(a, axis=-1), dtype=value.dtype), out=value)
+        else:
+            value = np.abs(value)
     if value.min() == value.max():
         return image
+    if adapted:
+        magnitude = value
+        peak = max(-low, high)
+        value = np.divide(magnitude, peak, dtype=np.float64)
+        # If the typical level would fall in the first histogram bin, spread
+        # faint levels before quantization while keeping the brightest endpoint.
+        stride = max(1, (max(value.shape) + 255) // 256)
+        compressed = float(np.median(value[::stride, ::stride])) < 1 / BINS
+        if compressed:
+            np.sqrt(value, out=value)
     h, w = value.shape
     tile = max(2, int(round(min(h, w) * settings.scale / 100)))
     ys = np.arange(0, h, tile); xs = np.arange(0, w, tile)
@@ -83,8 +104,27 @@ def process(image, settings, cancel=None):
             return maps[y, x, lo]*(1-t) + maps[y, x, hi]*t
         top = lookup(yl[row], xl)*(1-wx) + lookup(yl[row], xr)*wx
         bottom = lookup(yr[row], xl)*(1-wx) + lookup(yr[row], xr)*wx
-        target = v + (top*(1-wy[row]) + bottom*wy[row] - v)*(settings.amount/100)
-        gain = np.divide(target, v, out=np.ones_like(v), where=v>0)
-        out[row] = a[row] * (gain[:, None] if a.ndim == 3 else gain)
+        equalized = top*(1-wy[row]) + bottom*wy[row]
+        if adapted:
+            level = magnitude[row].astype(np.float64)
+            linear = level / peak if compressed else v
+            if compressed:
+                equalized *= equalized
+                # Inverting the compression can magnify small CDF shifts in
+                # faint regions. Bound the correction to one stop before blend.
+                np.clip(equalized, linear * .5, linear * 2., out=equalized)
+            target = linear + (equalized - linear)*(settings.amount/100)
+            # Bound roundoff in the histogram coordinate, then recover native
+            # units. Apply one positive scale to signed samples and RGB alike.
+            np.clip(target, 0., 1., out=target)
+            target *= peak
+            if rgb:
+                level, target = level[:, None], target[:, None]
+            ratios = np.divide(a[row], level, out=np.zeros_like(a[row], dtype=np.float64), where=level>0)
+            out[row] = ratios * target
+        else:
+            target = v + (equalized - v)*(settings.amount/100)
+            gain = np.divide(target, v, out=np.ones_like(v), where=v>0)
+            out[row] = a[row] * (gain[:, None] if rgb else gain)
     check()
     return out

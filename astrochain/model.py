@@ -40,7 +40,12 @@ from .clahe import ClaheSettings, process as process_clahe, VERSION as CLAHE_VER
 from .statistical_stretch import StatisticalSettings, process as process_statistical, VERSION as STATISTICAL_VERSION
 from .stretch import StretchSettings, evaluate as evaluate_stretch, VERSION as STRETCH_VERSION, COMPATIBLE_VERSIONS as STRETCH_COMPATIBLE_VERSIONS
 
-MODULE_NAMES={"recombine_stars":"Recombine Stars","separate_stars":"Separate Stars","stretch":"Stretch","statistical":"Statistical Stretch","clahe":"CLAHE","palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
+from lumerys_masks.chain_state import MaskNodeSettings, VERSION as MASKS_VERSION, prepare as prepare_mask, photographic_modules
+from lumerys_masks.manual_mask import MaskDocument, Geometry
+from lumerys_masks.chain_state import COMPATIBLE_VERSIONS as MASKS_COMPATIBLE_VERSIONS
+from lumerys_masks.universal_mask import blend as blend_universal, resolve_bindings
+
+MODULE_NAMES={"masks":"Masks","recombine_stars":"Recombine Stars","separate_stars":"Separate Stars","stretch":"Stretch","statistical":"Statistical Stretch","clahe":"CLAHE","palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
 
 class Cancelled(Exception):
     pass
@@ -64,6 +69,10 @@ class Pipeline:
         self.statistical_cache=OrderedDict()
         self.ghs_cache=OrderedDict()
         self.stretch_cache=OrderedDict()
+        self.mask_documents=OrderedDict()
+        self.serial_caches_by_divisor=OrderedDict()
+        self.universal_raw_cache=OrderedDict()
+        self.universal_blend_cache=OrderedDict()
         self.star_pairs={}
         self.freeze_frames={}
         self.channel_frames={}
@@ -153,6 +162,30 @@ class Pipeline:
             raise ValueError('Unsupported format')
         return gs, eq
 
+    def _external_input_signature(self, module, upstream):
+        if module['bypass']:
+            return ()
+        settings = module['settings']
+        if module['kind'] == 'palette_native':
+            return native_input_signature(settings, self.channel_frames)
+        if module['kind'] == 'recombine_stars':
+            if settings.document_title:
+                frame = module.get('stellar_frame')
+                return frame[0] if frame is not None else None
+            if settings.path:
+                return stellar_file_signature(settings.path)
+            return tuple((node['id'], node['settings'].token)
+                         for node in upstream if node['kind'] == 'separate_stars')
+        return ()
+
+    def _native_prefix(self, modules):
+        return tuple(
+            (module['id'], module['kind'], module['settings'], module['bypass'],
+             module.get('force', False), module.get('auto_reference', True),
+             self._external_input_signature(module, modules[:index]))
+            for index, module in enumerate(modules)
+        )
+
     def compute_serial(self, state, input_settings, integrated_ghs, modules, divisor=4, cancel=None, progress=None, allow_partial=False):
         cancel = cancel or threading.Event()
         progress = progress or (lambda text: None)
@@ -160,6 +193,7 @@ class Pipeline:
             raise ValueError('Open INPUT and confirm Linear or Already non-linear.')
         if divisor not in (1,2,4,8):raise ValueError('Invalid resolution')
         if cancel.is_set(): raise Cancelled()
+        bindings = resolve_bindings(modules)
         # Interactive previews run at the requested proxy resolution.
         # Native calibration parity needs shared references, not a full-chain
         # native render on each control change.
@@ -186,15 +220,15 @@ class Pipeline:
             geometries[frozen['id']]=native_shape
             offsets[frozen['id']]=offset
             previous_key=('freeze',settings.token,divisor);start=checkpoint+1;new=[None]*start
-            stale=settings.signature!=freeze_signature(self,state,input_settings,integrated_ghs,modules[:checkpoint])
+            stale=settings.signature!=freeze_signature(self,state,input_settings,integrated_ghs,photographic_modules(modules[:checkpoint]))
             diagnostics[frozen['id']]=dict(frozen=True,stale=stale,shape=list(self.freeze_frames[settings.token].shape),bytes=self.freeze_frames[settings.token].nbytes)
             notes.append('Freeze: native pixels pinned; upstream skipped'+(' · upstream changed: update manually' if stale else ''))
-        old=getattr(self,'serial_cache',[]);used=0
+        old=self.serial_caches_by_divisor.get(divisor,getattr(self,'serial_cache',[]));used=0
         for index,module in enumerate(modules[start:],start):
             if cancel.is_set(): raise Cancelled()
             pair = None
             if module['kind']=='separate_stars' and not module['bypass']:
-                pair = valid_pair(self,state,input_settings,integrated_ghs,modules[:index],module)
+                pair = valid_pair(self,state,input_settings,integrated_ghs,photographic_modules(modules[:index]),module)
                 if pair is None or pair.state != current_state:
                     message = 'Open Separate Stars and run separation for the current input and crop.'
                     if not allow_partial:
@@ -203,21 +237,37 @@ class Pipeline:
                                 output_state=current_state, notes=notes, diagnostics=diagnostics,
                                 processing_error=message, last_valid=modules[index-1]['id'] if index else 'INPUT',
                                 native_shape=native_shape, geometries=geometries, offsets=offsets, offset=offset)
+            binding = bindings.get(module['id'])
+            automatically_skipped = (module['kind'] in ('ghs','statistical')
+                                     and current_state == 'nonlinear' and not module.get('force',False))
+            masked = binding is not None and not module['bypass'] and not automatically_skipped
+            native_proxy = masked and divisor != 1
             ingress_shape=native_shape
-            external_signature=native_input_signature(module['settings'],self.channel_frames) if module['kind']=='palette_native' and not module['bypass'] else ()
-            if module['kind'] == 'recombine_stars' and not module['bypass']:
-                settings = module['settings']
-                if settings.path:
-                    external_signature = stellar_file_signature(settings.path)
-                else:
-                    external_signature = tuple(
-                        (node['id'], node['settings'].token)
-                        for node in modules[:index] if node['kind'] == 'separate_stars')
-            key=(previous_key,module['id'],module['kind'],module['settings'],module['bypass'],module.get('force',False),module.get('auto_reference',True),external_signature)
+            external_signature=self._external_input_signature(module,modules[:index])
+            key_settings = replace(module['settings'], apply_next=False, intensity=1.0) if module['kind']=='masks' else module['settings']
+            key=(previous_key,module['id'],module['kind'],key_settings,module['bypass'],module.get('force',False),module.get('auto_reference',True),external_signature)
+            if module['kind']=='stretch' and 'mask_preview' in module:
+                key += (module['mask_preview'],)
+            if native_proxy:
+                key += ('universal-native-proxy', binding.signature)
             record=old[index] if index<len(old) and old[index] is not None and old[index]['key']==key else None
+            if record is None and masked and divisor == 1:
+                record = self.universal_raw_cache.pop(key, None)
             result_cached=record is not None
             progress(f'{index+1}/{len(modules)} · '+MODULE_NAMES.get(module['kind'],module['kind'])+(' · cached result' if result_cached else ''))
             ingress=current
+            if record is None and native_proxy:
+                # The recursive native call already blends once. Reduce its R,
+                # never the independent I/P/M planes and never blend it again.
+                native = self.compute_serial(state, input_settings, integrated_ghs,
+                                             modules[:index+1], 1, cancel, progress,
+                                             allow_partial=allow_partial)
+                if native.get('processing_error'):
+                    return native
+                record = dict(key=key, output=reduce_image(native['output'],divisor),
+                              state=native['output_state'], note='', engine={},
+                              diagnostic=native['diagnostics'].get(module['id'],{}),
+                              universal_precomposited=True)
             if record is None:
                 prior=old[index] if index<len(old) and old[index] is not None and old[index]['key'][0]==previous_key and old[index]['key'][2]==module['kind'] else None
                 engine=prior.get('engine',{}) if prior else {}; output=current; next_state=current_state; note='';diagnostic={}
@@ -235,7 +285,15 @@ class Pipeline:
                                 next_state = native['output_state']
                                 diagnostic = native['diagnostics'][module['id']]
                             else:
-                                if settings.path:
+                                if settings.document_title:
+                                    frame = module.get('stellar_frame')
+                                    if frame is None:
+                                        raise ValueError('Select the open AstroSuite stellar document again.')
+                                    source_key, stars = frame
+                                    if stars.shape[:2] != native_shape[:2]:
+                                        raise ValueError('Stellar and starless pixel grids differ.')
+                                    linear = settings.external_linear
+                                elif settings.path:
                                     source_key = (external_signature, native_shape[:2])
                                     if engine.get('stellar_key') != source_key:
                                         stars = load_registered_rgb(settings.path, native_shape)
@@ -245,7 +303,7 @@ class Pipeline:
                                 else:
                                     stars, linear, source_key = internal_layer(
                                         self, state, input_settings, integrated_ghs,
-                                        modules[:index], native_shape, offset)
+                                        photographic_modules(modules[:index]), native_shape, offset)
                                 strength = 0.
                                 if settings.mode == 'manual':
                                     strength = settings.stretch
@@ -277,17 +335,37 @@ class Pipeline:
                                         output_state=current_state, notes=notes, diagnostics=diagnostics,
                                         processing_error=str(exc), last_valid=modules[index - 1]['id'] if index else 'INPUT',
                                         native_shape=native_shape, geometries=geometries, offsets=offsets, offset=offset)
+                    elif module['kind']=='masks':
+                        settings = module['settings']
+                        if settings.automatic.enabled:
+                            # Mask-only native evaluation never replaces the photo
+                            # flowing at the requested preview resolution.
+                            native = None
+                            if divisor != 1:
+                                native = self.compute_serial(state, input_settings, integrated_ghs,
+                                                             modules[:index], 1, cancel, progress)
+                            mask_input = native['output'] if native is not None else current
+                            mask_offset = native['offset'] if native is not None else offset
+                            geometry = Geometry(tuple(mask_input.shape[:2]), tuple(mask_offset), self.fingerprint)
+                            progress('Masks · native luminance mask')
+                            previous = self.mask_documents.get(module['id'])
+                            try:
+                                doc = prepare_mask(mask_input, settings, geometry, cancel, previous)
+                                if cancel.is_set() or doc is None:
+                                    raise Cancelled()
+                                self.mask_documents[module['id']] = doc
+                                self.mask_documents.move_to_end(module['id'])
+                                diagnostic = dict(mask_document=doc, mask_settings=settings)
+                            except ValueError as exc:
+                                # This auxiliary node must never block or alter
+                                # downstream photographic processing.
+                                diagnostic = dict(error=str(exc), mask_settings=settings)
                     elif module['kind']=='freeze':
                         note='Freeze live · capture to pin a native image'
                     elif module['kind']=='stretch':
                         from .stretch import active_pass
-                        if any(map(active_pass, module['settings'].passes)):
-                            prefix = tuple(
-                                (m['id'], m['kind'], m['settings'], m['bypass'],
-                                 m.get('force', False), m.get('auto_reference', True),
-                                 native_input_signature(m['settings'], self.channel_frames)
-                                 if m['kind']=='palette_native' and not m['bypass'] else ())
-                                for m in modules[:index])
+                        if 'mask_preview' in module or any(map(active_pass, module['settings'].passes)):
+                            prefix = self._native_prefix(modules[:index])
                             native_key = (self.fingerprint, state, integrated_ghs,
                                           input_settings if use_input else None, prefix, module['id'])
                             native = current if divisor == 1 else self.compute_serial(
@@ -295,13 +373,14 @@ class Pipeline:
                                 1, cancel, progress)['output']
                             rgb, next_state = evaluate_stretch(
                                 native, current_state, module['settings'], native_key,
-                                self.stretch_cache, self.cache_budget, cancel, progress)
+                                self.stretch_cache, self.cache_budget, cancel, progress,
+                                mask_preview=module.get('mask_preview'), diagnostics=diagnostic, mask_offset=offset)
                             output = reduce_image(rgb, divisor)
                     elif module['kind']=='ghs':
                         if current_state=='nonlinear' and not module.get('force',False):
                             note='GHS automatically skipped: data is already non-linear'
                         else:
-                            prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True),native_input_signature(m['settings'],self.channel_frames) if m['kind']=='palette_native' and not m['bypass'] else ()) for m in modules[:index])
+                            prefix=self._native_prefix(modules[:index])
                             native_key=(self.fingerprint,state,input_settings if integrated_ghs else None,integrated_ghs,prefix,module['settings'])
                             prepared=self.ghs_cache.pop(module['id'],None)
                             if prepared is None or prepared[0]!=native_key:
@@ -320,7 +399,7 @@ class Pipeline:
                             note='Statistical Stretch automatically skipped: data is already non-linear'
                             diagnostic=dict(skipped=True)
                         else:
-                            prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True),native_input_signature(m['settings'],self.channel_frames) if m['kind']=='palette_native' and not m['bypass'] else ()) for m in modules[:index])
+                            prefix=self._native_prefix(modules[:index])
                             native_key=(self.fingerprint,state,input_settings if integrated_ghs else None,integrated_ghs,prefix,module['settings'])
                             prepared=self.statistical_cache.pop(module['id'],None)
                             if prepared is None or prepared[0]!=native_key:
@@ -340,7 +419,7 @@ class Pipeline:
                         if not settings.identity():
                             if current_state!='nonlinear':
                                 raise ValueError('CLAHE requires non-linear data. Add an active stretch before CLAHE.')
-                            prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True),native_input_signature(m['settings'],self.channel_frames) if m['kind']=='palette_native' and not m['bypass'] else ()) for m in modules[:index])
+                            prefix=self._native_prefix(modules[:index])
                             native_key=(self.fingerprint,state,input_settings if integrated_ghs else None,integrated_ghs,prefix,settings)
                             prepared=self.clahe_cache.pop(module['id'],None)
                             if prepared is None or prepared[0]!=native_key:
@@ -365,7 +444,7 @@ class Pipeline:
                         if module['settings'].extraction_method==response_profiles.METHOD and current_state!='linear' and qualify_response_profile(module['settings'].response_profile)['hbeta_separated']:
                             raise ValueError('Hβ separation requires linear RGB ingress. Remove upstream stretching or use a two-component filter/current matrix.')
                         module['settings'].require_foraxx_state(current_state)
-                        prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True),native_input_signature(m['settings'],self.channel_frames) if m['kind']=='palette_native' and not m['bypass'] else ()) for m in modules[:index])
+                        prefix=self._native_prefix(modules[:index])
                         native_key=(state,input_settings if integrated_ghs else None,integrated_ghs,prefix,module['settings'],external_signature)
                         prepared=self.native_palette_cache.get(module['id'])
                         if prepared is None or prepared[0]!=native_key:
@@ -387,7 +466,7 @@ class Pipeline:
                         if is_foraxx(module['settings'].values()['view_a']) and current_state!='nonlinear':
                             raise ValueError('Foraxx requires non-linear data: insert an active GHS node before Nebula Palette, or select a classic palette.')
                         if module['settings'].values()['extraction_method'] in (spectral.METHOD,response_profiles.METHOD):
-                            prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True),native_input_signature(m['settings'],self.channel_frames) if m['kind']=='palette_native' and not m['bypass'] else ()) for m in modules[:index])
+                            prefix=self._native_prefix(modules[:index])
                             native_key=('spectral-legacy',state,input_settings if integrated_ghs else None,integrated_ghs,prefix,module['settings'])
                             prepared=self.native_palette_cache.get(module['id'])
                             if prepared is None or prepared[0]!=native_key:
@@ -435,7 +514,7 @@ class Pipeline:
                     elif module['kind']=='compressor':
                         settings=module['settings'];reference=settings.reference
                         if module.get('auto_reference',True):
-                            prefix=tuple((m['id'],m['kind'],m['settings'],m['bypass'],m.get('force',False),m.get('auto_reference',True),native_input_signature(m['settings'],self.channel_frames) if m['kind']=='palette_native' and not m['bypass'] else ()) for m in modules[:index])
+                            prefix=self._native_prefix(modules[:index])
                             reference_key=(state,input_settings if integrated_ghs else None,integrated_ghs,prefix)
                             prepared=self.compressor_references.get(module['id'])
                             if prepared is None or prepared[0]!=reference_key:
@@ -455,6 +534,55 @@ class Pipeline:
                     diagnostic=dict(input_histograms=engine['histograms'],output_histograms=engine['histograms'] if output is current else input_histograms(output))
                 output.setflags(write=False)
                 record=dict(key=key,output=output,state=next_state,note=note,engine=engine,diagnostic=diagnostic)
+            raw_record = record
+            if module['kind'] == 'masks':
+                record = dict(record, diagnostic=dict(record.get('diagnostic',{}), mask_settings=module['settings']))
+            if masked and not record.get('universal_precomposited'):
+                self.universal_raw_cache[key] = raw_record
+                self.universal_raw_cache.move_to_end(key)
+                mixed_key = ('universal-mixed', key, binding.signature)
+                prepared = self.universal_blend_cache.pop(mixed_key, None)
+                blend_cached = prepared is not None
+                try:
+                    mask_diagnostic = diagnostics.get(binding.mask_id,{})
+                    document = mask_diagnostic.get('mask_document')
+                    if document is None or mask_diagnostic.get('error'):
+                        raise ValueError(mask_diagnostic.get('error') or 'Universal mask pixels are unavailable.')
+                    if prepared is None:
+                        mask = document.final()
+                        geometry = Geometry(tuple(ingress.shape[:2]),tuple(offset),self.fingerprint)
+                        processed_geometry = Geometry(tuple(record['output'].shape[:2]),tuple(offset),self.fingerprint)
+                        mixed = blend_universal(ingress, record['output'], mask,
+                                                ingress_geometry=geometry,
+                                                processed_geometry=processed_geometry,
+                                                mask_geometry=document.geometry,
+                                                intensity=binding.settings.intensity)
+                        if binding.settings.intensity == 0 or not mask.any():
+                            mixed_state = current_state
+                        elif binding.settings.intensity == 1 and np.all(mask == 1):
+                            mixed_state = record['state']
+                        else:
+                            mixed_state = 'nonlinear' if 'nonlinear' in (current_state,record['state']) else record['state']
+                        mixed.setflags(write=False)
+                        prepared = (mixed,mixed_state)
+                    if cancel.is_set():
+                        raise Cancelled()
+                    self.universal_blend_cache[mixed_key] = prepared
+                    mixed,mixed_state = prepared
+                    effective_diagnostic = dict(record.get('diagnostic',{}), universal_mask=dict(
+                        source=binding.mask_id, target=module['id'], intensity=float(binding.settings.intensity),
+                        raw_cached=result_cached, blend_cached=blend_cached, native=True))
+                    if module['kind'] == 'curves':
+                        effective_diagnostic['output_histograms'] = input_histograms(mixed)
+                    record = dict(record,output=mixed,state=mixed_state,diagnostic=effective_diagnostic)
+                except ValueError as exc:
+                    if not allow_partial:
+                        raise
+                    return dict(base=base,output=ingress,stages=stages,states=states,
+                                output_state=current_state,notes=notes,diagnostics=diagnostics,
+                                processing_error='Universal mask: '+str(exc),
+                                last_valid=modules[index-1]['id'] if index else 'INPUT',
+                                native_shape=native_shape,geometries=geometries,offsets=offsets,offset=offset)
             current=record['output'];current_state=record['state'];stages[module['id']]=current;states[module['id']]=current_state
             if pair is not None:
                 native_shape=pair.images[0].shape
@@ -464,7 +592,7 @@ class Pipeline:
             geometries[module['id']]=native_shape
             offsets[module['id']]=offset
             if record['note']:notes.append(record['note'])
-            if module['kind'] in ('statistical','parametric','filament','palette','palette_native','curves','recombine_stars'):
+            if module['kind'] in ('stretch','statistical','parametric','filament','palette','palette_native','curves','recombine_stars','masks'):
                 diagnostics[module['id']]=dict(record.get('diagnostic',{}),result_cached=result_cached)
                 if result_cached:diagnostics[module['id']]['elapsed']=0.
             if module['kind']=='compressor':
@@ -476,8 +604,17 @@ class Pipeline:
                     diag['spectrum']=(frequency,original,processed)
                 diagnostics[module['id']]=diag
             # Bounded retained results; displayed stage references live in the UI until replaced.
-            new.append(record)
-            previous_key=key
+            new.append(raw_record)
+            effective_key = mixed_key if masked and not raw_record.get('universal_precomposited') else key
+            previous_key=key[0] if module['kind']=='masks' else effective_key
+        active_masks = {m['id'] for m in modules if m['kind']=='masks'}
+        for mask_id in set(self.mask_documents)-active_masks:
+            self.mask_documents.pop(mask_id, None)
+        while self.mask_documents and buffer_bytes((new,self.mask_documents)) > self.cache_budget:
+            self.mask_documents.popitem(last=False)
+        for cache in (self.universal_blend_cache, self.universal_raw_cache):
+            while cache and buffer_bytes((new,self.universal_raw_cache,self.universal_blend_cache)) > self.cache_budget:
+                cache.popitem(last=False)
         # Keep compact stage outputs before expensive disposable analyses.
         while self.filament_cache and buffer_bytes((new,self.filament_cache))>self.cache_budget:
             self.filament_cache.popitem(last=False)
@@ -491,15 +628,21 @@ class Pipeline:
             new[i]=None
         while new and new[-1] is None:new.pop()
         self.serial_cache=new
+        self.serial_caches_by_divisor[divisor] = new
+        self.serial_caches_by_divisor.move_to_end(divisor)
+        while len(self.serial_caches_by_divisor) > 1 and buffer_bytes(self.serial_caches_by_divisor) > self.cache_budget:
+            self.serial_caches_by_divisor.popitem(last=False)
         if cancel.is_set():raise Cancelled()
         sky_display=any(m['kind']=='palette' and not m['bypass'] and (sky_active(m['settings']) or any(any(x!=y for x,y in c['points']) for c in m['settings'].values()['gas_curves']['channels'].values())) for m in modules[(checkpoint+1) if checkpoint is not None else 0:])
         if checkpoint is not None:sky_display=sky_display or modules[checkpoint]['settings'].direct_display
         return dict(native_shape=native_shape, geometries=geometries, offsets=offsets, offset=offset, freeze_index=checkpoint,base=base,output=current,stages=stages,states=states,output_state=current_state,notes=notes,diagnostics=diagnostics,sky_direct_display=sky_display,
                     sky_proxy_preview=bool(sky_display and divisor!=1))
 
-    def serial_project(self, snapshot):
+    def serial_project(self, snapshot, *, include_mask_pixels=True):
+        from .stretch import settings_record as stretch_settings_record
         snapshot=dict(snapshot,modules=snapshot.get("graph_modules",snapshot["modules"]))
-        data=dict(schema=2,application='AstroChain Prototype',source=dict(sha256=self.fingerprint),versions=dict(ghs='0.4.1',spatial='0.1.2'),input=dict(state_index=snapshot['state_index'],ghs=asdict(snapshot['ghs']),integrated=snapshot['integrated']),modules=[dict(id=m['id'],kind=m['kind'],settings=({'crop':m['settings'].crop} if m['kind']=='separate_stars' else asdict(m['settings'])),bypass=m['bypass'],force=m.get('force',False),position=m.get('position')) for m in snapshot['modules']],preview_divisor=snapshot['divisor'],output=dict(format=snapshot['format'],path=snapshot['path']))
+        data=dict(schema=2,application='AstroChain Prototype',source=dict(sha256=self.fingerprint),versions=dict(ghs='0.4.1',spatial='0.1.2'),input=dict(state_index=snapshot['state_index'],ghs=asdict(snapshot['ghs']),integrated=snapshot['integrated']),modules=[dict(id=m['id'],kind=m['kind'],settings=({'crop':m['settings'].crop} if m['kind']=='separate_stars' else stretch_settings_record(m['settings'], include_mask_pixels=include_mask_pixels) if m['kind']=='stretch' else m['settings'].to_project(include_mask_pixels) if m['kind']=='masks' else asdict(m['settings'])),bypass=m['bypass'],force=m.get('force',False),position=m.get('position')) for m in snapshot['modules']],preview_divisor=snapshot['divisor'],output=dict(format=snapshot['format'],path=snapshot['path']))
+        if any(m['kind']=='masks' for m in snapshot['modules']):data['versions']['masks']=MASKS_VERSION
         if any(m['kind']=='palette_native' for m in snapshot['modules']):data['versions']['palette_native']=NATIVE_PALETTE_VERSION
         if any((m['settings'].extraction_method if m['kind']=='palette_native' else m['settings'].values()['extraction_method'] if m['kind']=='palette' else 'matrix')==spectral.METHOD for m in snapshot['modules']):data['versions']['spectral_extraction']=spectral.VERSION
         if any((m['settings'].extraction_method if m['kind']=='palette_native' else m['settings'].values()['extraction_method'] if m['kind']=='palette' else 'matrix')==response_profiles.METHOD for m in snapshot['modules']):data['versions']['response_profiles']=response_profiles.VERSION
@@ -536,8 +679,9 @@ class Pipeline:
             return dict(state_index=data['input']['state_index'],ghs=gs,integrated=True,modules=[dict(id=str(uuid.uuid4()),kind='eq',settings=eq,bypass=data['module']['bypass'],force=False)],divisor=data['preview_divisor'],format=data['output']['format'],path=data['output']['path'])
         if data.get('schema')!=2 or data.get('application')!='AstroChain Prototype':raise ValueError('Unsupported project')
         if data['source']['sha256']!=self.fingerprint:raise ValueError('Select the same original image as the project.')
-        supported=dict(recombine_stars=RECOMBINE_VERSION,separate_stars=STAR_VERSION,stretch=STRETCH_VERSION,statistical=STATISTICAL_VERSION,clahe=CLAHE_VERSION,palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
+        supported=dict(masks=MASKS_VERSION,recombine_stars=RECOMBINE_VERSION,separate_stars=STAR_VERSION,stretch=STRETCH_VERSION,statistical=STATISTICAL_VERSION,clahe=CLAHE_VERSION,palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
         def version_supported(kind,version):
+            if kind=='masks':return version in MASKS_COMPATIBLE_VERSIONS
             if kind=='response_profiles':return version==response_profiles.VERSION
             if kind=='spectral_extraction':return version==spectral.VERSION
             if kind=='recombine_stars':return version in RECOMBINE_VERSIONS
@@ -556,6 +700,7 @@ class Pipeline:
                 return NativePaletteSettings(**p)
             if kind=='recombine_stars':return RecombineSettings(**p)
             if kind=='separate_stars':return StarSettings(crop=p.get('crop'))
+            if kind=='masks':return MaskNodeSettings.from_project(p)
             if kind=='freeze':return FreezeSettings(**p)
             if kind=='stretch':return StretchSettings.from_project(p,parse)
             if kind=='statistical':return StatisticalSettings(**p)
@@ -579,6 +724,7 @@ class Pipeline:
         for m in data['modules']:
             if not isinstance(m['id'],str) or not m['id'] or m['id'] in ids:raise ValueError('Invalid instance identifier')
             if type(m['bypass']) is not bool or type(m.get('force',False)) is not bool:raise ValueError('Invalid module state')
+            if m['kind']=='masks' and data['versions'].get('masks') not in MASKS_COMPATIBLE_VERSIONS:raise ValueError('Incompatible Masks version')
             if m['kind']=='compressor' and (data['versions'].get('compressor')!='0.2.2' or type(m.get('auto_reference',True)) is not bool or type(m.get('spectrum',False)) is not bool):raise ValueError('Invalid compressor or missing version')
             if m['kind']=='palette_native' and data['versions'].get('palette_native') not in NATIVE_PALETTE_COMPATIBLE_VERSIONS:raise ValueError('Incompatible Palette Studio version')
             if m['kind']=='statistical' and data['versions'].get('statistical')!=STATISTICAL_VERSION:raise ValueError('Incompatible Statistical Stretch version')
@@ -627,6 +773,7 @@ def buffer_bytes(value,seen=None):
     if id(value) in seen:return 0
     seen.add(id(value))
     if isinstance(value,np.ndarray):return value.nbytes
+    if isinstance(value,MaskDocument):return buffer_bytes(value.__dict__,seen)
     if isinstance(value,PassPipeline):return value.cache_bytes+value.source.nbytes
     if isinstance(value,dict):return sum(buffer_bytes(v,seen) for v in value.values())
     if isinstance(value,(tuple,list)):return sum(buffer_bytes(v,seen) for v in value)
