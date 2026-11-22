@@ -36,6 +36,7 @@ from .palette_native_inputs import signature as native_input_signature, load as 
 from . import spectral_extraction as spectral
 from . import response_profiles as response_profiles
 from .profile_separation import qualify as qualify_response_profile
+from .hdr_fusion import HDRFusionSettings, develop as develop_hdr_fusion, mix as mix_hdr_fusion, VERSION as HDR_FUSION_VERSION
 from .clahe import ClaheSettings, process as process_clahe, VERSION as CLAHE_VERSION
 from .statistical_stretch import StatisticalSettings, process as process_statistical, VERSION as STATISTICAL_VERSION
 from .stretch import StretchSettings, evaluate as evaluate_stretch, VERSION as STRETCH_VERSION, COMPATIBLE_VERSIONS as STRETCH_COMPATIBLE_VERSIONS
@@ -45,7 +46,7 @@ from lumerys_masks.manual_mask import MaskDocument, Geometry
 from lumerys_masks.chain_state import COMPATIBLE_VERSIONS as MASKS_COMPATIBLE_VERSIONS
 from lumerys_masks.universal_mask import blend as blend_universal, resolve_bindings
 
-MODULE_NAMES={"masks":"Masks","recombine_stars":"Recombine Stars","separate_stars":"Separate Stars","stretch":"Stretch","statistical":"Statistical Stretch","clahe":"CLAHE","palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
+MODULE_NAMES={"hdr_fusion":"HDR Fusion","masks":"Masks","recombine_stars":"Recombine Stars","separate_stars":"Separate Stars","stretch":"Stretch","statistical":"Statistical Stretch","clahe":"CLAHE","palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
 
 class Cancelled(Exception):
     pass
@@ -67,6 +68,7 @@ class Pipeline:
         self.native_palette_cache=OrderedDict()
         self.clahe_cache=OrderedDict()
         self.statistical_cache=OrderedDict()
+        self.hdr_fusion_cache=OrderedDict()
         self.ghs_cache=OrderedDict()
         self.stretch_cache=OrderedDict()
         self.mask_documents=OrderedDict()
@@ -238,8 +240,8 @@ class Pipeline:
                                 processing_error=message, last_valid=modules[index-1]['id'] if index else 'INPUT',
                                 native_shape=native_shape, geometries=geometries, offsets=offsets, offset=offset)
             binding = bindings.get(module['id'])
-            automatically_skipped = (module['kind'] in ('ghs','statistical')
-                                     and current_state == 'nonlinear' and not module.get('force',False))
+            automatically_skipped = (current_state == 'nonlinear' and (module['kind'] == 'hdr_fusion'
+                                      or (module['kind'] in ('ghs','statistical') and not module.get('force',False))))
             masked = binding is not None and not module['bypass'] and not automatically_skipped
             native_proxy = masked and divisor != 1
             ingress_shape=native_shape
@@ -324,7 +326,7 @@ class Pipeline:
                                         mask = engine['mask']
                                 output = compose(current, stars, strength, settings.intensity,
                                                  settings.protect, check_cancel, mask=mask,
-                                                 attenuation=settings.attenuation)
+                                                 attenuation=settings.attenuation, saturation=settings.saturation)
                                 if settings.intensity and (strength or not linear or settings.protect):
                                     next_state = 'nonlinear'
                                 diagnostic = dict(strength=strength, mask=mask)
@@ -414,6 +416,30 @@ class Pipeline:
                             output=reduce_image(rgb,divisor);next_state='nonlinear'
                             note='Statistical Stretch · native calculation; output in [0, 1]'
                             diagnostic=dict(diagnostic,native_shape=list(rgb.shape))
+                    elif module['kind']=='hdr_fusion':
+                        if current_state == 'nonlinear':
+                            note = 'HDR Fusion automatically skipped: data is already non-linear'
+                        else:
+                            prefix = self._native_prefix(modules[:index])
+                            native_key = (self.fingerprint, state, integrated_ghs,
+                                          input_settings if use_input else None, prefix)
+                            prepared = self.hdr_fusion_cache.pop(module['id'], None)
+                            if prepared is None or prepared[0] != native_key:
+                                progress('HDR Fusion · developing five native stretches')
+                                native = current if divisor == 1 else self.compute_serial(
+                                    state, input_settings, integrated_ghs, modules[:index],
+                                    1, cancel, progress)['output']
+                                middle, fused = develop_hdr_fusion(native, cancel)
+                                middle.setflags(write=False)
+                                fused.setflags(write=False)
+                            else:
+                                _, middle, fused = prepared
+                            self.hdr_fusion_cache[module['id']] = (native_key, middle, fused)
+                            while self.hdr_fusion_cache and buffer_bytes(self.hdr_fusion_cache) > self.cache_budget:
+                                self.hdr_fusion_cache.popitem(last=False)
+                            output = reduce_image(mix_hdr_fusion(middle, fused, module['settings'].strength), divisor)
+                            next_state = 'nonlinear'
+                            note = 'HDR Fusion · five Statistical Stretches at native resolution'
                     elif module['kind']=='clahe':
                         settings=module['settings']
                         if not settings.identity():
@@ -646,6 +672,9 @@ class Pipeline:
         if any(m['kind']=='palette_native' for m in snapshot['modules']):data['versions']['palette_native']=NATIVE_PALETTE_VERSION
         if any((m['settings'].extraction_method if m['kind']=='palette_native' else m['settings'].values()['extraction_method'] if m['kind']=='palette' else 'matrix')==spectral.METHOD for m in snapshot['modules']):data['versions']['spectral_extraction']=spectral.VERSION
         if any((m['settings'].extraction_method if m['kind']=='palette_native' else m['settings'].values()['extraction_method'] if m['kind']=='palette' else 'matrix')==response_profiles.METHOD for m in snapshot['modules']):data['versions']['response_profiles']=response_profiles.VERSION
+        for module in data['modules']:
+            if module['kind'] == 'recombine_stars' and not module['settings']['saturation']:
+                module['settings'].pop('saturation')
         if any(m['kind']=='recombine_stars' for m in snapshot['modules']):data['versions']['recombine_stars']=RECOMBINE_VERSION
         if any(m['kind']=='separate_stars' for m in snapshot['modules']):data['versions']['separate_stars']=STAR_VERSION
         if any(m['kind']=='freeze' for m in snapshot['modules']):data['versions']['freeze']=FREEZE_VERSION
@@ -656,6 +685,7 @@ class Pipeline:
         if any(m['kind']=='statistical' or (m['kind']=='palette_native' and 'statistical' in m['settings'].gas_stretch_methods) for m in snapshot['modules']):data['versions']['statistical']=STATISTICAL_VERSION
         if any(m['kind']=='stretch' for m in snapshot['modules']):
             data['versions'].update(stretch=STRETCH_VERSION, statistical=STATISTICAL_VERSION)
+        if any(m['kind']=='hdr_fusion' for m in snapshot['modules']):data['versions']['hdr_fusion']=HDR_FUSION_VERSION
         if any(m['kind']=='clahe' for m in snapshot['modules']):data['versions']['clahe']=CLAHE_VERSION
         if any(m['kind']=='curves' for m in snapshot['modules']):data['versions']['curves']=CURVES_VERSION
         if any(m['kind']=='colors' for m in snapshot['modules']):data['versions']['colors']='12.4'
@@ -679,7 +709,7 @@ class Pipeline:
             return dict(state_index=data['input']['state_index'],ghs=gs,integrated=True,modules=[dict(id=str(uuid.uuid4()),kind='eq',settings=eq,bypass=data['module']['bypass'],force=False)],divisor=data['preview_divisor'],format=data['output']['format'],path=data['output']['path'])
         if data.get('schema')!=2 or data.get('application')!='AstroChain Prototype':raise ValueError('Unsupported project')
         if data['source']['sha256']!=self.fingerprint:raise ValueError('Select the same original image as the project.')
-        supported=dict(masks=MASKS_VERSION,recombine_stars=RECOMBINE_VERSION,separate_stars=STAR_VERSION,stretch=STRETCH_VERSION,statistical=STATISTICAL_VERSION,clahe=CLAHE_VERSION,palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
+        supported=dict(hdr_fusion=HDR_FUSION_VERSION,masks=MASKS_VERSION,recombine_stars=RECOMBINE_VERSION,separate_stars=STAR_VERSION,stretch=STRETCH_VERSION,statistical=STATISTICAL_VERSION,clahe=CLAHE_VERSION,palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
         def version_supported(kind,version):
             if kind=='masks':return version in MASKS_COMPATIBLE_VERSIONS
             if kind=='response_profiles':return version==response_profiles.VERSION
@@ -704,6 +734,7 @@ class Pipeline:
             if kind=='freeze':return FreezeSettings(**p)
             if kind=='stretch':return StretchSettings.from_project(p,parse)
             if kind=='statistical':return StatisticalSettings(**p)
+            if kind=='hdr_fusion':return HDRFusionSettings(**p)
             if kind=='clahe':return ClaheSettings(**p)
             if kind=='curves':return CurveSettings(**p)
             if kind=='eq':p['gains']=tuple(p['gains']);return EqualizerSettings(**p)
@@ -731,6 +762,7 @@ class Pipeline:
             if m['kind']=='stretch' and (data['versions'].get('stretch') not in STRETCH_COMPATIBLE_VERSIONS or data['versions'].get('statistical')!=STATISTICAL_VERSION):
                 raise ValueError('Incompatible Stretch version')
             if m['kind']=='recombine_stars' and data['versions'].get('recombine_stars') not in RECOMBINE_VERSIONS:raise ValueError('Incompatible Recombine Stars version')
+            if m['kind']=='hdr_fusion' and data['versions'].get('hdr_fusion')!=HDR_FUSION_VERSION:raise ValueError('Incompatible HDR Fusion version')
             if m['kind']=='clahe' and data['versions'].get('clahe')!=CLAHE_VERSION:raise ValueError('Incompatible CLAHE version')
             if m['kind']=='freeze' and data['versions'].get('freeze')!=FREEZE_VERSION:raise ValueError('Incompatible Freeze version')
             if m['kind']=='curves' and data['versions'].get('curves') not in ('0.1.0',CURVES_VERSION):raise ValueError('Incompatible Curves version')

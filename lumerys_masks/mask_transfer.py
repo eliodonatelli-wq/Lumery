@@ -9,6 +9,7 @@ FORMAT = 'lumerys.mask'
 VERSION = 2
 GRAY_TILE_TAG = 'lumerys.gray.tile'
 _copied = None
+_adjustments = None
 
 
 def snapshot(document):
@@ -62,6 +63,16 @@ def copy_mask(document):
 
 def copied_mask():
     return deepcopy(_copied)
+
+
+def copy_adjustments(settings, strength, brush, strokes):
+    global _adjustments
+    _adjustments = (settings, strength, brush, tuple(strokes))
+
+
+def copied_adjustments():
+    # Settings and brush paths are immutable. Each paste replays into new tiles.
+    return _adjustments
 
 
 def freeze_manual_reference(reference):

@@ -1,6 +1,7 @@
 """Immutable worker snapshots and versioned project records for mask nodes."""
 from dataclasses import dataclass, field, asdict, replace
 import json
+import math
 import numpy as np
 from .automatic_mask import MaskSettings, mask_settings, encode_reference, decode_reference
 from .manual_mask import MaskDocument, Geometry, TILE
@@ -17,10 +18,10 @@ class MaskNodeSettings:
     saved: str = field(default='', compare=False, repr=False)
     apply_next: bool = False  # Legacy/programmatic records stay generation-only.
     intensity: float = 1.0
+    strokes: tuple | None = None
 
     def __post_init__(self):
         from numbers import Real
-        import math
         if type(self.apply_next) is not bool:
             raise ValueError('Invalid universal mask application switch')
         if (isinstance(self.intensity, (bool, np.bool_)) or not isinstance(self.intensity, Real)
@@ -31,6 +32,8 @@ class MaskNodeSettings:
         result = dict(version=VERSION, apply_next=self.apply_next, intensity=float(self.intensity), automatic=asdict(self.automatic),
                       geometry=list(self.geometry), corrections=[list(item) for item in self.corrections] if include_pixels else [],
                       editable_pixels=include_pixels)
+        if include_pixels and self.strokes is not None:
+            result['strokes'] = self.strokes
         if include_pixels and self.saved:
             result['result'] = json.loads(self.saved)
         return result
@@ -47,7 +50,18 @@ class MaskNodeSettings:
             Geometry(geometry[:2],geometry[2:4],geometry[4])
         corrections = tuple((y,x,freeze_manual_reference(ref)) for y,x,ref in record['corrections'])
         application = dict(apply_next=record['apply_next'], intensity=record['intensity']) if record['version'] == VERSION else {}
-        settings = cls(automatic,geometry,corrections,**application)
+        strokes = record.get('strokes')
+        if strokes is not None:
+            strokes = tuple((mode, diameter, softness, level,
+                             tuple(None if point is None else tuple(point) for point in points))
+                            for mode, diameter, softness, level, points in strokes)
+            for mode, diameter, softness, level, points in strokes:
+                if (mode not in ('exclude', 'restore', 'paint') or not math.isfinite(diameter)
+                        or diameter <= 0 or not 0 <= softness <= 1 or not 0 <= level <= 1
+                        or any(point is not None and (len(point) != 2 or not all(map(math.isfinite, point)))
+                               for point in points)):
+                    raise ValueError('Invalid manual mask stroke')
+        settings = cls(automatic,geometry,corrections,strokes=strokes,**application)
         decode_tiles(settings)  # Validate before accepting the project.
         saved = record.get('result')
         if saved is not None:
@@ -57,7 +71,7 @@ class MaskNodeSettings:
             expected = decode_tiles(settings)
             if tiles.keys() != expected.keys() or any(not np.array_equal(tiles[k],expected[k]) for k in tiles):
                 raise ValueError('Saved mask corrections disagree')
-        return cls(automatic,geometry,corrections,json.dumps(saved, separators=(',',':')) if saved is not None else '',**application)
+        return replace(settings, saved=json.dumps(saved, separators=(',', ':'))) if saved is not None else settings
 
 
 def geometry_key(geometry):
@@ -98,17 +112,27 @@ def prepare(image, settings, geometry, cancel=None, previous=None):
         doc = MaskDocument(image, settings.automatic, geometry)
     doc._ingress = image
     doc.tiles = decode_tiles(settings)
+    if settings.strokes is not None:
+        doc.strokes = list(settings.strokes)
+    elif doc.tiles:
+        doc.strokes = None
+    else:
+        doc.strokes = []
     doc.undo_stack,doc.redo_stack = [],[]
     if cancel and cancel.is_set():
         return None
     return doc
 
 
-def fork(document):
+def fork(document, *, corrections=True):
     """Share immutable image/automatic planes, detach mutable correction tiles."""
     doc = object.__new__(MaskDocument)
     doc.__dict__ = document.__dict__.copy()
-    doc.tiles = {k:v.copy() for k,v in document.tiles.items()}
+    doc.tiles = {k:v.copy() for k,v in document.tiles.items()} if corrections else {}
+    if corrections and document.strokes is None:
+        doc.strokes = None
+    else:
+        doc.strokes = document.strokes.copy() if corrections else []
     doc.undo_stack,doc.redo_stack = [],[]
     doc._before,doc._last = None,None
     doc._coverage = None

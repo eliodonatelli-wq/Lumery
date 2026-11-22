@@ -73,7 +73,7 @@ class BetaTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(data)) as outer:
             self.assertEqual(len(outer.namelist()), 3)
             self.assertEqual({Path(n).name for n in outer.namelist()},
-                             {'AstroChain_Prototype.py', package_beta.LIBRARY_NAME, 'INSTALL.md'})
+                             {'Lumerys_HDR_DEV.py', package_beta.LIBRARY_NAME, 'INSTALL.md'})
             library = next(n for n in outer.namelist() if n.endswith(package_beta.LIBRARY_NAME))
             with zipfile.ZipFile(io.BytesIO(outer.read(library))) as inner:
                 self.assertEqual(set(inner.namelist()),
@@ -89,7 +89,7 @@ class BetaTests(unittest.TestCase):
             self.assertRaises(ValueError, package_beta.build)
 
     def test_launcher_reports_missing_dependency(self):
-        spec = importlib.util.spec_from_file_location('lumerys_launcher', ROOT/'AstroChain_Prototype.py')
+        spec = importlib.util.spec_from_file_location('lumerys_launcher', ROOT/'Lumerys_HDR_DEV.py')
         launcher = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(launcher)
         real_import = __import__('importlib').import_module

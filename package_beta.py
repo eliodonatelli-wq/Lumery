@@ -7,7 +7,7 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-LIBRARY_NAME = '_astrochain_lib_stretch23_masks_r1.zip'
+LIBRARY_NAME = '_astrochain_lib_hdrdev1.zip'
 
 
 def constant(path, name):
@@ -27,7 +27,7 @@ def add_bytes(archive, name, content):
 
 
 def build(root=ROOT, verified_library=None):
-    version = constant(root / 'AstroChain_Prototype.py', 'SCRIPT_VERSION')
+    version = constant(root / 'Lumerys_HDR_DEV.py', 'SCRIPT_VERSION')
     if version != constant(root / 'astrochain/__init__.py', '__version__'):
         raise ValueError('Launcher/library version mismatch')
     sources = {}
@@ -64,7 +64,7 @@ def build(root=ROOT, verified_library=None):
     folder = f'Lumerys_{version}'
     content = io.BytesIO()
     with zipfile.ZipFile(content, 'w') as archive:
-        add_bytes(archive, folder + '/AstroChain_Prototype.py', (root / 'AstroChain_Prototype.py').read_bytes())
+        add_bytes(archive, folder + '/Lumerys_HDR_DEV.py', (root / 'Lumerys_HDR_DEV.py').read_bytes())
         add_bytes(archive, folder + '/' + LIBRARY_NAME, library_bytes)
         add_bytes(archive, folder + '/INSTALL.md', instructions.encode('utf-8'))
     return version, content.getvalue()

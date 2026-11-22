@@ -38,9 +38,14 @@ class RecombineSlider(QWidget):
         self.setValue(initial)
 
     def slide(self, position):
-        fraction = position / self.slider.maximum()
-        value = (math.expm1(fraction * math.log1p(self.high)) if self.logarithmic
-                 else self.low + fraction * (self.high - self.low))
+        if position == self.slider.minimum():
+            value = self.low
+        elif position == self.slider.maximum():
+            value = self.high
+        else:
+            fraction = position / self.slider.maximum()
+            value = (math.expm1(fraction * math.log1p(self.high)) if self.logarithmic
+                     else self.low + fraction * (self.high - self.low))
         self.setValue(value)
 
     def setValue(self, value):
@@ -92,6 +97,8 @@ class RecombineEditor(InstrumentDialog):
         form.addRow('Stretch strength', self.strength)
         self.intensity = RecombineSlider(0, 3, 1)
         form.addRow('Stellar intensity', self.intensity)
+        self.saturation = RecombineSlider(-100, 100, 0)
+        form.addRow('Saturazione stelle', self.saturation)
         self.protect = QCheckBox('Protect output range')
         self.protect.setChecked(True)
         form.addRow(self.protect)
@@ -115,7 +122,7 @@ class RecombineEditor(InstrumentDialog):
         preview.clicked.connect(self.preview)
         form.addRow(preview)
         for signal in (self.path.textChanged, self.external_linear.toggled, self.mode.currentIndexChanged,
-                       self.strength.valueChanged, self.intensity.valueChanged,
+                       self.strength.valueChanged, self.intensity.valueChanged, self.saturation.valueChanged,
                        self.protect.toggled, self.bypass.toggled, self.mask_enabled.toggled,
                        self.mask_contrast.valueChanged, self.attenuation.valueChanged):
             signal.connect(self.changed)
@@ -199,7 +206,8 @@ class RecombineEditor(InstrumentDialog):
                                  self.mode.currentData(), self.strength.value(),
                                  self.intensity.value(), self.protect.isChecked(),
                                  self.mask_enabled.isChecked(), self.mask_contrast.value(),
-                                 self.attenuation.value() / 100, self.document_title)
+                                 self.attenuation.value() / 100, self.document_title,
+                                 saturation=self.saturation.value())
 
     def restore(self, settings):
         self.applied_auto = None
@@ -211,6 +219,7 @@ class RecombineEditor(InstrumentDialog):
         self.mode.setCurrentIndex(self.mode.findData(settings.mode))
         self.strength.setValue(settings.stretch)
         self.intensity.setValue(settings.intensity)
+        self.saturation.setValue(settings.saturation)
         self.protect.setChecked(settings.protect)
         self.mask_view.setChecked(False)
         self.mask_enabled.setChecked(settings.mask_enabled)

@@ -1,14 +1,15 @@
 """AstroSuite entrypoint for source checkouts and portable ZIP installs."""
-SCRIPT_NAME = 'Lumerys'
+SCRIPT_NAME = 'Lumerys · HDR DEV'
 SCRIPT_GROUP = 'Enhancement'
-SCRIPT_VERSION = '0.10.0.stretch23.1'
+SCRIPT_VERSION = '0.10.0.stretch23.1.hdrdev1'
 SCRIPT_DESCRIPTION = 'Serial node editor with suggested OSC/RGB, narrowband, and Foraxx starting workflows.'
 
 def run(ctx):
+    import os
     import sys
     from pathlib import Path
     root = Path(__file__).resolve().parent
-    library = root / '_astrochain_lib_stretch23_masks_r1.zip'
+    library = root / '_astrochain_lib_hdrdev1.zip'
     # A development checkout owns its source package; portable installs use ZIP.
     location = str(root if (root / 'astrochain' / '__init__.py').is_file() else library)
     if location in sys.path:
@@ -18,12 +19,32 @@ def run(ctx):
     report_error = None
     try:
         import importlib
-        existing = sys.modules.get('astrochain')
-        if existing is not None and getattr(existing, '__version__', None) != SCRIPT_VERSION:
+        packages = ('astrochain', 'lumerys_masks')
+        stale_locations = set()
+        reload_packages = False
+        for package in packages:
+            existing = sys.modules.get(package)
+            if existing is None:
+                continue
+            module_file = getattr(existing, '__file__', None)
+            origin = Path(module_file).parent.parent if module_file else None
+            if origin is None or str(origin.resolve()) != location:
+                reload_packages = True
+                if origin is not None:
+                    stale_locations.update((str(origin), str(origin.resolve())))
+            if package == 'astrochain' and getattr(existing, '__version__', None) != SCRIPT_VERSION:
+                reload_packages = True
+        if reload_packages:
+            # Both packages share runtime state and must come from the same installation.
             for name in list(sys.modules):
-                if name == 'astrochain' or name.startswith('astrochain.'):
+                if name.partition('.')[0] in packages:
                     del sys.modules[name]
+            sys.path[:] = [entry for entry in sys.path if entry not in stale_locations]
             importlib.invalidate_caches()
+            for entry in list(sys.path_importer_cache):
+                if any(entry == origin or entry.startswith(origin + os.sep)
+                       for origin in stale_locations):
+                    sys.path_importer_cache.pop(entry, None)
         from astrochain.diagnostics import report_error
         import astrochain
         if astrochain.__version__ != SCRIPT_VERSION:
@@ -38,7 +59,9 @@ def run(ctx):
         from astrochain.ui import ChainDialog
         from astrochain.vendor.ghs.host import capture
         source, metadata = capture(ctx)
-        ChainDialog(source, metadata, ctx).exec()
+        dialog = ChainDialog(source, metadata, ctx)
+        dialog.setWindowTitle(SCRIPT_NAME)
+        dialog.exec()
     except Exception as exc:
         if report_error is not None:
             report_error(ctx, exc, 'launcher')

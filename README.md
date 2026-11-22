@@ -1,4 +1,4 @@
-# Lumerys — Stretch 23.1
+# Lumerys — HDR DEV
 
 Lumerys is a node-based astrophotography workflow for AstroSuite Pro. Use it
 to stretch images, apply masks, adjust color and contrast, separate and
@@ -6,10 +6,14 @@ recombine stars, and compose narrowband palettes.
 
 ## Getting started
 
+Download the installable ZIP from the [HDR DEV prerelease](https://github.com/eliodonatelli-wq/Lumery/releases/tag/v0.10.0-stretch23.1-hdrdev1).
 Install the ZIP as described in [the installation guide](INSTALL_BETA.md),
-restart AstroSuite Pro, open an image, and choose **Enhancement → Lumerys**.
+restart AstroSuite Pro, open an image, and choose **Script → Enhancement → Lumerys · HDR DEV**.
 Confirm the input state in **INPUT**, then build a chain or choose a suggested
 workflow. **Render** opens a new document and **Export FITS** saves the result.
+
+To test HDR Fusion, start with a linear image and add **HDR Fusion** immediately after INPUT.
+See the [HDR Fusion guide](INSTALL_BETA.md#hdr-fusion).
 
 Try **INPUT → Stretch → Masks → Curves → CLAHE → OUTPUT**. Masks applies to
 Curves. CLAHE receives the resulting image and applies its own settings.

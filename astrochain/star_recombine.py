@@ -21,6 +21,7 @@ class RecombineSettings:
     mask_contrast: float = 1.0
     attenuation: float = 0.5
     document_title: str = ''
+    saturation: float = 0.0
 
     def __post_init__(self):
         if (not isinstance(self.document_title, str) or not isinstance(self.path, str)
@@ -28,6 +29,7 @@ class RecombineSettings:
                 or type(self.external_linear) is not bool or type(self.protect) is not bool
                 or type(self.mask_enabled) is not bool or not .25 <= self.mask_contrast <= 4
                 or not 0 <= self.attenuation <= 1
+                or not -100 <= self.saturation <= 100
                 or not 0 <= self.stretch <= MAX_STRETCH or not 0 <= self.intensity <= 3):
             raise ValueError('Invalid Recombine Stars settings.')
 
@@ -47,7 +49,7 @@ def suggest_stretch(stars):
 
 
 def compose(nebula, stars, strength, intensity=1., protect=True, check_cancel=lambda: None, *,
-            mask=None, attenuation=0.):
+            mask=None, attenuation=0., saturation=0.):
     """Apply a common gain and soft headroom limit without mutating either input."""
     if nebula.shape[:2] != stars.shape[:2]:
         raise ValueError('Stellar and starless pixel grids differ.')
@@ -92,5 +94,19 @@ def compose(nebula, stars, strength, intensity=1., protect=True, check_cancel=la
             cap = ratio[knee]
             scale[knee] = cap * (1 - cap / (16 - 8 * cap))
             delta *= scale
+        if saturation and delta.ndim == 3 and stars.ndim == 3:
+            # Change chroma around the signed stellar luminance. Work after the
+            # existing shoulder so the saturation control preserves its luminance.
+            luminance = (.2126 * delta[..., 0:1] + .7152 * delta[..., 1:2]
+                         + .0722 * delta[..., 2:3])
+            chroma_change = (delta - luminance) * (saturation / 100)
+            if protect:
+                # Use one limiter per pixel to preserve luminance and hue direction.
+                combined = base + delta
+                room = np.maximum(0, np.where(chroma_change > 0, 1 - combined, combined))
+                limit = np.full_like(chroma_change, np.inf)
+                np.divide(room, np.abs(chroma_change), out=limit, where=chroma_change != 0)
+                chroma_change *= np.minimum(1, limit.min(axis=-1, keepdims=True))
+            delta += chroma_change
         np.add(base, delta, out=result[region])
     return result

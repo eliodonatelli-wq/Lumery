@@ -34,6 +34,7 @@ class MaskDocument:
         self.settings = settings
         self.automatic = build_mask(self.image, settings, offset=self.geometry.offset)
         self.tiles = {}
+        self.strokes = []  # None when older projects only supplied correction tiles.
         self.undo_stack, self.redo_stack = [], []
         self.history_budget = history_budget
         self._before = None
@@ -58,13 +59,15 @@ class MaskDocument:
         self._before = {}
         self._last = None
         self._coverage = {}
-        self._brush = (mode, float(diameter), float(softness), np.float32(level))
+        self._brush = (mode, float(diameter), float(softness), float(level))
+        self._points = []
 
     def stroke_to(self, x, y):
         if self._before is None:
             raise RuntimeError('Begin a stroke first')
         if not math.isfinite(x) or not math.isfinite(y):
             raise ValueError('Invalid brush coordinates')
+        self._points.append((float(x), float(y)))
         previous = self._last or (x, y)
         distance = math.hypot(x-previous[0], y-previous[1])
         count = max(1, math.ceil(distance / max(.5, self._brush[1] / 8)))
@@ -75,10 +78,13 @@ class MaskDocument:
         self.revision += 1
 
     def break_segment(self):
+        if self._before is not None and self._last is not None:
+            self._points.append(None)
         self._last = None
 
     def _stamp(self, x, y):
         mode, diameter, softness, level = self._brush
+        level = np.float32(level)
         radius = diameter / 2
         h, w = self.geometry.shape
         left, right = max(0, math.floor(x-radius)), min(w, math.ceil(x+radius))
@@ -156,16 +162,20 @@ class MaskDocument:
         else:
             self.tiles.pop(key, None)
 
-    def end_stroke(self):
+    def end_stroke(self, *, keep_stroke=False):
         if self._before is None:
             return
         before = self._before
         self._before, self._last = None, None
         self._coverage = None
         changed = {k: v for k, v in before.items() if not self._same(v, self.tiles.get(k))}
-        if changed:
+        if changed or keep_stroke:
+            stroke = (*self._brush, tuple(self._points))
+            previous = len(self.strokes) if self.strokes is not None else None
+            if self.strokes is not None:
+                self.strokes.append(stroke)
             after = {k: None if k not in self.tiles else self.tiles[k].copy() for k in changed}
-            self.undo_stack.append((changed, after))
+            self.undo_stack.append((changed, after, previous, stroke))
             self.redo_stack.clear()
             # Keep the latest stroke undoable, even if it alone exceeds the budget.
             while len(self.undo_stack) > 1 and self.history_bytes > self.history_budget:
@@ -178,7 +188,7 @@ class MaskDocument:
     @property
     def history_bytes(self):
         return sum(v.nbytes for stack in (self.undo_stack, self.redo_stack)
-                   for pair in stack for changes in pair for v in changes.values() if v is not None)
+                   for pair in stack for changes in pair[:2] for v in changes.values() if v is not None)
 
     def _apply(self, changes):
         for key, value in changes.items():
@@ -193,21 +203,43 @@ class MaskDocument:
         if self.undo_stack:
             record = self.undo_stack.pop()
             self._apply(record[0]); self.redo_stack.append(record)
+            previous = record[2]
+            if isinstance(previous, int):
+                del self.strokes[previous:]
+            else:
+                self.strokes = None if previous is None else list(previous)
 
     def redo(self):
         self.end_stroke()
         if self.redo_stack:
             record = self.redo_stack.pop()
             self._apply(record[1]); self.undo_stack.append(record)
+            if record[3] is None:
+                self.strokes = []
+            elif self.strokes is not None:
+                self.strokes.append(record[3])
 
     def reset_manual(self):
         self.end_stroke()
-        if self.tiles:
+        if self.tiles or self.strokes != []:
             before = {k: v.copy() for k, v in self.tiles.items()}
-            self.undo_stack.append((before, {k: None for k in before}))
+            previous = None if self.strokes is None else tuple(self.strokes)
+            self.undo_stack.append((before, {k: None for k in before}, previous, None))
+            self.strokes = []
             self.redo_stack.clear(); self.tiles.clear(); self.revision += 1
             while len(self.undo_stack) > 1 and self.history_bytes > self.history_budget:
                 self.undo_stack.pop(0)
+
+    def replay_strokes(self, strokes):
+        """Apply paths to an empty correction layer through the normal brush."""
+        for mode, diameter, softness, level, points in strokes:
+            self.begin_stroke(mode, diameter, softness, level)
+            for point in points:
+                if point is None:
+                    self.break_segment()
+                else:
+                    self.stroke_to(*point)
+            self.end_stroke(keep_stroke=True)
 
     def final(self):
         if not self.tiles:

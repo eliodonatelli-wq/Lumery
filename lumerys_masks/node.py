@@ -20,4 +20,5 @@ def evaluate(ingress, state, settings, *, offset=(0, 0), source_id='', document=
         if document.geometry != geometry:
             raise ValueError('Manual mask corrections require matching image geometry and source')
         result.tiles = {key: value.copy() for key, value in document.tiles.items()}
+        result.strokes = None if document.strokes is None else document.strokes.copy()
     return ingress, state, result

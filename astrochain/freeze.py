@@ -27,9 +27,12 @@ def signature(pipeline,state,input_settings,integrated,modules):
     from .response_profiles import METHOD
     def settings_record(module):
         value=asdict(module['settings'])
+        if module['kind']=='masks':value.pop('strokes', None)
         # Empty/inactive new profile fields must not stale spectral1 Freeze
         # checkpoints, whose numeric processing has not changed.
         if module['kind']=='freeze' and not any(value['offset']):value.pop('offset')
+        if module['kind']=='recombine_stars' and not value.get('saturation'):
+            value.pop('saturation', None)
         if module['kind']=='recombine_stars' and not value.get('document_title'):
             value.pop('document_title', None)
         if module['kind']=='recombine_stars' and not value['mask_enabled']:

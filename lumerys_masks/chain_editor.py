@@ -45,14 +45,13 @@ class MaskNodeEditor(QDialog):
         doc = self.controls.document
         automatic = self.controls.settings()
         if doc is not None and self._tile_revision != (id(doc),doc.revision):
-            self._settings = replace(self._settings, automatic=automatic, geometry=geometry_key(doc.geometry), corrections=encode_tiles(doc), saved='')
+            self._settings = replace(self._settings, automatic=automatic, geometry=geometry_key(doc.geometry), corrections=encode_tiles(doc), saved='',
+                                     strokes=None if doc.strokes is None else tuple(doc.strokes))
             self._tile_revision = (id(doc),doc.revision)
         elif self._settings.automatic != automatic:
             self._settings = replace(self._settings,automatic=automatic,saved='')
-        intensity = self.controls.strength.value()/100
-        # Preserve legacy fractional intensities until the slider is changed.
-        if round(self._settings.intensity*100) != self.controls.strength.value():
-            self._settings = replace(self._settings, intensity=intensity)
+        if self._settings.intensity != self.controls.mask_strength:
+            self._settings = replace(self._settings, intensity=self.controls.mask_strength)
         return self._settings
 
     def settings_for_project(self):
@@ -74,7 +73,7 @@ class MaskNodeEditor(QDialog):
             self._settings = settings; self._tile_revision = None
             widgets = [controls.strength,controls.enabled,controls.inverted,*controls.sliders.values()]
             blockers = [QSignalBlocker(w) for w in widgets]
-            controls.strength.setValue(round(settings.intensity*100))
+            controls.set_strength(settings.intensity)
             controls.enabled.setChecked(settings.automatic.enabled)
             controls.inverted.setChecked(settings.automatic.inverted)
             for key,slider in controls.sliders.items():slider.setValue(getattr(settings.automatic,key))

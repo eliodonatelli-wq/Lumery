@@ -223,11 +223,11 @@ assert sys.argv[2] in astrochain.__file__, astrochain.__file__
             result = subprocess.run([sys.executable, '-B', '-c', script, str(path), expected_location],
                                     env=env, text=True, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        run(ROOT / 'AstroChain_Prototype.py', str(ROOT / 'astrochain'))
+        run(ROOT / 'Lumerys_HDR_DEV.py', str(ROOT / 'astrochain'))
         with tempfile.TemporaryDirectory() as folder:
             version, data = package_beta.build()
             import io
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 archive.extractall(folder)
-            launcher = next(Path(folder).rglob('AstroChain_Prototype.py'))
+            launcher = next(Path(folder).rglob('Lumerys_HDR_DEV.py'))
             run(launcher, f'{package_beta.LIBRARY_NAME}/astrochain')

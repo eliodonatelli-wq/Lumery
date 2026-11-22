@@ -1,6 +1,15 @@
 # Lumerys — Installation and reference
 
-Version: `0.10.0.stretch23.1`
+Version: `0.10.0.stretch23.1.hdrdev1`
+
+## HDR Fusion
+
+Open a linear image in AstroSuite Pro, select **Linear** when starting the
+chain, and add **HDR Fusion** before any node that makes the data nonlinear.
+HDR Fusion blends five statistical stretches using luminance masks.
+Use **Fusion Strength** or bypass the node to compare the result.
+The node skips nonlinear input. The macOS host was checked interactively.
+Windows host validation is pending.
 
 ## Masks
 
@@ -246,12 +255,12 @@ beside it. StarNet and its weights are supplied separately.
 ## Installation — macOS and Windows
 
 1. Close AstroSuite Pro.
-2. Extract the distribution ZIP. Keep `AstroChain_Prototype.py` and
-   `_astrochain_lib_stretch23_masks_r1.zip` together in the extracted folder.
+2. Extract the distribution ZIP. Keep `Lumerys_HDR_DEV.py` and
+   `_astrochain_lib_hdrdev1.zip` together in the extracted folder.
    Leave the inner ZIP intact.
 3. Move any previous Lumerys script folders outside the scripts directory
    for rollback. Place the extracted folder inside the scripts directory.
-4. Start AstroSuite Pro, open an image, and choose **Enhancement → Lumerys**.
+4. Start AstroSuite Pro, open an image, and choose **Script → Enhancement → Lumerys · HDR DEV**.
 
 The usual script locations are:
 

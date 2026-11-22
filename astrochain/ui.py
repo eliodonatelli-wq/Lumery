@@ -13,6 +13,7 @@ from .model import Pipeline, Cancelled, EqualizerSettings, ghs, identity_ghs, dy
 from .vendor.ghs.ui import Control
 from .statistical_stretch import StatisticalSettings
 from .ghs_auto import suggest as suggest_ghs
+from .hdr_fusion import HDRFusionSettings
 from .clahe import ClaheSettings
 from .curves import CurveSettings
 from .curve_editor import CurveEditor
@@ -573,7 +574,7 @@ class ChainDialog(InstrumentDialog):
         menu.exec(QCursor.pos())
 
     def add_module(self,node):
-        settings=StatisticalSettings() if node.kind=='statistical' else ClaheSettings() if node.kind=='clahe' else NativePaletteSettings() if node.kind=='palette_native' else FreezeSettings() if node.kind=='freeze' else CurveSettings() if node.kind=='curves' else self.pipeline.initial if node.kind=='ghs' else dynamics.Settings(mode='multiband') if node.kind=='compressor' else ParametricSettings() if node.kind=='parametric' else FilamentSettings() if node.kind=='filament' else PaletteSettings() if node.kind=='palette' else ColorSettings() if node.kind=='colors' else EqualizerSettings()
+        settings=HDRFusionSettings() if node.kind=='hdr_fusion' else StatisticalSettings() if node.kind=='statistical' else ClaheSettings() if node.kind=='clahe' else NativePaletteSettings() if node.kind=='palette_native' else FreezeSettings() if node.kind=='freeze' else CurveSettings() if node.kind=='curves' else self.pipeline.initial if node.kind=='ghs' else dynamics.Settings(mode='multiband') if node.kind=='compressor' else ParametricSettings() if node.kind=='parametric' else FilamentSettings() if node.kind=='filament' else PaletteSettings() if node.kind=='palette' else ColorSettings() if node.kind=='colors' else EqualizerSettings()
         self.kinds[node.key]=node.kind
         if node.kind=='masks':
             from lumerys_masks.chain_editor import MaskNodeEditor
@@ -597,6 +598,9 @@ class ChainDialog(InstrumentDialog):
         elif node.kind=='statistical':
             from .statistical_editor import StatisticalEditor
             self.editors[node.key]=StatisticalEditor(self,settings,'Statistical Stretch · '+str(node.serial))
+        elif node.kind=='hdr_fusion':
+            from .hdr_fusion_editor import HDRFusionEditor
+            self.editors[node.key]=HDRFusionEditor(self,settings,'HDR Fusion · '+str(node.serial))
         elif node.kind=='clahe':
             from .clahe_editor import ClaheEditor
             self.editors[node.key]=ClaheEditor(self,settings,'CLAHE · '+str(node.serial))
@@ -727,12 +731,12 @@ class ChainDialog(InstrumentDialog):
         except ValueError:
             for node in self.canvas.modules:
                 editor=self.editors.get(node.key)
-                if editor:node.set_compatibility('either' if node.kind in ('ghs','statistical') and editor.force.isChecked() else 'linear' if node.kind in ('ghs','statistical') else 'either','unknown')
+                if editor:node.set_compatibility('either' if node.kind in ('ghs','statistical') and editor.force.isChecked() else 'linear' if node.kind in ('ghs','statistical','hdr_fusion') else 'either','unknown')
             return
         for node in nodes:
             editor=self.editors.get(node.key)
             if editor is None:continue
-            requirement='either' if node.kind in ('ghs','statistical') and editor.force.isChecked() else 'linear' if node.kind in ('ghs','statistical') else 'either'
+            requirement='either' if node.kind in ('ghs','statistical') and editor.force.isChecked() else 'linear' if node.kind in ('ghs','statistical','hdr_fusion') else 'either'
             if node.kind=='clahe' and not editor.settings().identity():requirement='nonlinear'
             if node.kind=='palette' and is_foraxx(editor.settings().values()['view_a']):requirement='nonlinear'
             if node.kind=='palette_native' and editor.settings().requires_nonlinear():requirement='nonlinear'
@@ -749,7 +753,7 @@ class ChainDialog(InstrumentDialog):
             if node.kind=='stretch' and status=='ok':
                 from .stretch import changes_state
                 if any(map(changes_state, editor.settings().passes)):state='nonlinear'
-            if node.kind=='statistical' and status=='ok':state='nonlinear'
+            if node.kind in ('statistical','hdr_fusion') and status=='ok':state='nonlinear'
             if node.kind=='ghs' and status=='ok' and not identity_ghs(editor.settings()):state='nonlinear'
             if node.kind=='colors' and status=='ok' and any(editor.settings().values()['tone'].get(k,0)!=0 for k in ('highlights','shadows','whites','blacks')):state='nonlinear'
     def schedule(self,*args):
