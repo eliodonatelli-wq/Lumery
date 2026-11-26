@@ -13,6 +13,12 @@ Choose the package for your application. Both packages contain the same shared e
 
 [Release notes and verification manifest](https://github.com/eliodonatelli-wq/Lumery/releases/tag/v0.11.0-beta1)
 
+## Italian manual
+
+[Download the illustrated Italian manual (PDF, draft 2)](https://github.com/eliodonatelli-wq/Lumery/releases/download/v0.11.0-beta1/Lumerys_Manuale_IT_Nuova_Edizione_Bozza_02.pdf)
+
+The 49-page draft covers all 16 modules, with updated screenshots and chapter bookmarks. It applies to both Astro Suite Pro and Siril. Before/after examples and Astro Suite-specific illustrations will be expanded in a later revision.
+
 ## Shared workflow
 
 The common source includes multipass Stretch, Statistical Stretch, selective HDR, HDR Fusion, masks, palettes, interactive curves, crop, StarNet 2.1 separation and stellar recombination. Processing, previews, caching and project settings are shared across both applications.
