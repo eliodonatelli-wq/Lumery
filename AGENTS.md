@@ -1,18 +1,11 @@
-# Lumerys project rules
+# Lumerys shared project
 
-These rules apply to work throughout this project.
-
-1. Git is the primary system for versioning the code.
-2. Do not automatically create backups, ZIP archives, project copies, or alternate
-   files with suffixes such as `_backup`, `_old`, `_v2`, or similar names.
-3. Before significant changes, check that the Git working tree is clean. If there
-   are uncommitted changes, report them to the user before proceeding.
-4. Before risky work, propose a safety commit instead of duplicating files.
-5. Do not create commits or push automatically without the user's authorization.
-6. Do not delete existing backups without the user's consent.
-7. Never include astronomical images, temporary data, caches, or large files in
-   the repository. Keep these outside version control and respect `.gitignore`.
-8. Keep documentation, code comments, and technical names in English.
-9. Do not change application behavior to enforce these rules. These are rules
-   for development work; leave existing runtime behavior unchanged unless the
-   user explicitly authorizes a separate application change.
+- This is the active project for shared development, tests and release packaging.
+- Keep numerical engines and shared UI in source/lumerys_core and source/lumerys_shared_masks.
+- Keep host integration in source/lumerys_host and the two entry points.
+- Prepare Astro Suite and Siril packages from the same source revision.
+- Preserve archive contents and existing input images.
+- Use Git for development history. Commit and publish when the user authorizes it.
+- Keep generated packages, astronomical images and caches outside version control.
+- Run the relevant tests after changes, and distinguish automated checks from host UI validation.
+- Keep code and technical documentation in English.

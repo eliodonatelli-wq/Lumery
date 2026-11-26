@@ -1,0 +1,16 @@
+"""Structural integration contracts for shared UI and numerical processing."""
+from typing import Protocol, Any
+from pathlib import Path
+
+
+class Host(Protocol):
+    name: str
+
+    def documents(self) -> dict[str, tuple[str, Any]]: ...
+    def starnet_paths(self) -> tuple[Path, Path]: ...
+    def log(self, message: str) -> None: ...
+
+
+class DocumentHost(Host, Protocol):
+    def capture_source(self) -> tuple[Any, dict]: ...
+    def publish(self, image, *, metadata: dict, name: str): ...
