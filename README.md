@@ -13,11 +13,12 @@ Choose the package for your application. Both packages contain the same shared e
 
 [Release notes and verification manifest](https://github.com/eliodonatelli-wq/Lumery/releases/tag/v0.11.0-rc2)
 
-## Italian manual
+## User manuals for 0.11.0-rc2
 
-[Download the illustrated Italian manual (PDF, draft 2)](https://github.com/eliodonatelli-wq/Lumery/releases/download/v0.11.0-beta1/Lumerys_Manuale_IT_Nuova_Edizione_Bozza_02.pdf)
+- [Manuale utente in italiano (PDF)](https://github.com/eliodonatelli-wq/Lumery/releases/download/v0.11.0-rc2/Lumerys_Manuale_IT_0.11.0-rc2.pdf)
+- [English user manual (PDF)](https://github.com/eliodonatelli-wq/Lumery/releases/download/v0.11.0-rc2/Lumerys_User_Manual_EN_0.11.0-rc2.pdf)
 
-The 49-page draft covers all 16 modules, with updated screenshots and chapter bookmarks. It applies to both Astro Suite Pro and Siril. Before/after examples and Astro Suite-specific illustrations will be expanded in a later revision.
+Both illustrated editions cover all 18 modules and apply to Astro Suite Pro and Siril.
 
 ## Shared workflow
 
