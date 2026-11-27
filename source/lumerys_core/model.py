@@ -29,7 +29,7 @@ from .curves import input_histograms,CurveSettings,process as process_curves,VER
 from .star_recombine import RecombineSettings, VERSION as RECOMBINE_VERSION, COMPATIBLE_VERSIONS as RECOMBINE_VERSIONS, compose, suggest_stretch
 from .star_luminance_mask import build_mask
 from .star_recombine_inputs import external_signature as stellar_file_signature, internal_layer, load_registered_rgb
-from .star_node import StarSettings, VERSION as STAR_VERSION, valid_pair
+from .star_node import COMPATIBLE_VERSIONS as STAR_VERSIONS, StarSettings, VERSION as STAR_VERSION, valid_pair
 from .freeze import FreezeSettings,VERSION as FREEZE_VERSION,frame_view,signature as freeze_signature
 from .palette_native import NativePaletteSettings, render as native_palette_render, VERSION as NATIVE_PALETTE_VERSION, COMPATIBLE_VERSIONS as NATIVE_PALETTE_COMPATIBLE_VERSIONS
 from .palette_native_inputs import signature as native_input_signature, load as native_load_inputs
@@ -38,6 +38,7 @@ from . import response_profiles as response_profiles
 from .profile_separation import qualify as qualify_response_profile
 from .hdr_fusion import HDRFusionSettings, develop as develop_hdr_fusion, mix as mix_hdr_fusion, VERSION as HDR_FUSION_VERSION
 from .clahe import ClaheSettings, process as process_clahe, VERSION as CLAHE_VERSION
+from .background_neutralization import BackgroundSettings, process as process_background, VERSION as BACKGROUND_VERSION
 from .statistical_stretch import StatisticalSettings, process as process_statistical, VERSION as STATISTICAL_VERSION
 from .stretch import StretchSettings, evaluate as evaluate_stretch, VERSION as STRETCH_VERSION, COMPATIBLE_VERSIONS as STRETCH_COMPATIBLE_VERSIONS
 
@@ -46,7 +47,9 @@ from lumerys_shared_masks.manual_mask import MaskDocument, Geometry
 from lumerys_shared_masks.chain_state import COMPATIBLE_VERSIONS as MASKS_COMPATIBLE_VERSIONS
 from lumerys_shared_masks.universal_mask import blend as blend_universal, resolve_bindings
 
-MODULE_NAMES={"hdr_fusion":"HDR Fusion","masks":"Masks","recombine_stars":"Recombine Stars","separate_stars":"Separate Stars","stretch":"Stretch","statistical":"Statistical Stretch","clahe":"CLAHE","palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
+from .syqon import SyqonSettings, VERSION as SYQON_VERSION, valid_result
+
+MODULE_NAMES={"background_neutralization":"Background Neutralization","syqon":"SyQon","hdr_fusion":"HDR Fusion","masks":"Masks","recombine_stars":"Recombine Stars","separate_stars":"Separate Stars","stretch":"Stretch","statistical":"Statistical Stretch","clahe":"CLAHE","palette_native":"Palette Studio","freeze":"Freeze","curves":"Curves","ghs":"Adaptive GHS","eq":"Spatial Equalizer","compressor":"Multiband Compressor","parametric":"Astro Parametric Equalizer","filament":"Nebula Filament Enhancer","palette":"Nebula Palette","colors":"Nebula Colors & Tone"}
 
 class Cancelled(Exception):
     pass
@@ -76,6 +79,7 @@ class Pipeline:
         self.universal_raw_cache=OrderedDict()
         self.universal_blend_cache=OrderedDict()
         self.star_pairs={}
+        self.syqon_results={}
         self.freeze_frames={}
         self.channel_frames={}
         self.freeze_proxies={}
@@ -228,6 +232,16 @@ class Pipeline:
         old=self.serial_caches_by_divisor.get(divisor,getattr(self,'serial_cache',[]));used=0
         for index,module in enumerate(modules[start:],start):
             if cancel.is_set(): raise Cancelled()
+            syqon_result = None
+            if module['kind']=='syqon' and not module['bypass']:
+                syqon_result=valid_result(self,state,input_settings,integrated_ghs,modules[:index],module)
+                if syqon_result is None:
+                    message='SyQon: Run is required for the current native input and settings, or enable Bypass.'
+                    if not allow_partial:raise ValueError(message)
+                    return dict(base=base,output=current,stages=stages,states=states,output_state=current_state,
+                                notes=notes,diagnostics=diagnostics,processing_error=message,
+                                last_valid=modules[index-1]['id'] if index else 'INPUT',native_shape=native_shape,
+                                geometries=geometries,offsets=offsets,offset=offset)
             pair = None
             if module['kind']=='separate_stars' and not module['bypass'] and not module['settings'].crop_only:
                 pair = valid_pair(self,state,input_settings,integrated_ghs,photographic_modules(modules[:index]),module)
@@ -372,6 +386,10 @@ class Pipeline:
                                 # This auxiliary node must never block or alter
                                 # downstream photographic processing.
                                 diagnostic = dict(error=str(exc), mask_settings=settings)
+                    elif module['kind']=='syqon':
+                        output=reduce_image(syqon_result.image,divisor)
+                        next_state=syqon_result.state
+                        note='SyQon · '+module['settings'].model+' · native cached result'
                     elif module['kind']=='freeze':
                         note='Freeze live · capture to pin a native image'
                     elif module['kind']=='stretch':
@@ -406,6 +424,16 @@ class Pipeline:
                             while self.ghs_cache and buffer_bytes(self.ghs_cache)>self.cache_budget:self.ghs_cache.popitem(last=False)
                             output=reduce_image(rgb,divisor)
                             if not identity_ghs(module['settings']): next_state='nonlinear'
+                    elif module['kind'] == 'background_neutralization':
+                        if divisor == 1:
+                            output, diagnostic = process_background(current, module['settings'], cancel)
+                        else:
+                            native = self.compute_serial(state, input_settings, integrated_ghs,
+                                                         modules[:index+1], 1, cancel, progress)
+                            output = reduce_image(native['output'], divisor)
+                            diagnostic = native['diagnostics'][module['id']]
+                        if diagnostic.get('message'):
+                            note = 'Background Neutralization · ' + diagnostic['message']
                     elif module['kind']=='statistical':
                         if current_state=='nonlinear' and not module.get('force',False):
                             note='Statistical Stretch automatically skipped: data is already non-linear'
@@ -639,12 +667,14 @@ class Pipeline:
             if pair is not None:
                 native_shape=pair.images[0].shape
                 offset=pair.offset
+            if syqon_result is not None:
+                native_shape=syqon_result.image.shape;offset=syqon_result.offset
             if module['kind'] == 'recombine_stars':
                 native_shape = native_shape[:2] + current.shape[2:]
             geometries[module['id']]=native_shape
             offsets[module['id']]=offset
             if record['note']:notes.append(record['note'])
-            if module['kind'] in ('stretch','statistical','parametric','filament','palette','palette_native','curves','recombine_stars','masks'):
+            if module['kind'] in ('stretch','statistical','parametric','filament','palette','palette_native','curves','recombine_stars','masks','background_neutralization'):
                 diagnostics[module['id']]=dict(record.get('diagnostic',{}),result_cached=result_cached)
                 if result_cached:diagnostics[module['id']]['elapsed']=0.
             if module['kind']=='compressor':
@@ -693,7 +723,9 @@ class Pipeline:
     def serial_project(self, snapshot, *, include_mask_pixels=True):
         from .stretch import settings_record as stretch_settings_record
         snapshot=dict(snapshot,modules=snapshot.get("graph_modules",snapshot["modules"]))
-        data=dict(schema=2,application='AstroChain Prototype',source=dict(sha256=self.fingerprint),versions=dict(ghs='0.4.1',spatial='0.1.2'),input=dict(state_index=snapshot['state_index'],ghs=asdict(snapshot['ghs']),integrated=snapshot['integrated']),modules=[dict(id=m['id'],kind=m['kind'],settings=({'crop':m['settings'].crop,'crop_only':m['settings'].crop_only} if m['kind']=='separate_stars' else stretch_settings_record(m['settings'], include_mask_pixels=include_mask_pixels) if m['kind']=='stretch' else m['settings'].to_project(include_mask_pixels) if m['kind']=='masks' else asdict(m['settings'])),bypass=m['bypass'],force=m.get('force',False),position=m.get('position')) for m in snapshot['modules']],preview_divisor=snapshot['divisor'],output=dict(format=snapshot['format'],path=snapshot['path']))
+        data=dict(schema=2,application='AstroChain Prototype',source=dict(sha256=self.fingerprint),versions=dict(ghs='0.4.1',spatial='0.1.2'),input=dict(state_index=snapshot['state_index'],ghs=asdict(snapshot['ghs']),integrated=snapshot['integrated']),modules=[dict(id=m['id'],kind=m['kind'],settings=({'crop':m['settings'].crop,'crop_only':m['settings'].crop_only, 'engine':m['settings'].engine} if m['kind']=='separate_stars' else stretch_settings_record(m['settings'], include_mask_pixels=include_mask_pixels) if m['kind']=='stretch' else m['settings'].to_project(include_mask_pixels) if m['kind']=='masks' else asdict(m['settings'])),bypass=m['bypass'],force=m.get('force',False),position=m.get('position')) for m in snapshot['modules']],preview_divisor=snapshot['divisor'],output=dict(format=snapshot['format'],path=snapshot['path']))
+        if any(m['kind'] == 'background_neutralization' for m in snapshot['modules']):
+            data['versions']['background_neutralization'] = BACKGROUND_VERSION
         if any(m['kind']=='masks' for m in snapshot['modules']):data['versions']['masks']=MASKS_VERSION
         if any(m['kind']=='palette_native' for m in snapshot['modules']):data['versions']['palette_native']=NATIVE_PALETTE_VERSION
         if any((m['settings'].extraction_method if m['kind']=='palette_native' else m['settings'].values()['extraction_method'] if m['kind']=='palette' else 'matrix')==spectral.METHOD for m in snapshot['modules']):data['versions']['spectral_extraction']=spectral.VERSION
@@ -701,8 +733,14 @@ class Pipeline:
         for module in data['modules']:
             if module['kind'] == 'recombine_stars' and not module['settings']['saturation']:
                 module['settings'].pop('saturation')
+            if module['kind'] == 'separate_stars':
+                if module['settings']['engine'] == 'starnet':
+                    module['settings'].pop('engine')
+                    data['versions'].setdefault('separate_stars', STAR_VERSIONS[0])
+                else:
+                    data['versions']['separate_stars'] = STAR_VERSION
         if any(m['kind']=='recombine_stars' for m in snapshot['modules']):data['versions']['recombine_stars']=RECOMBINE_VERSION
-        if any(m['kind']=='separate_stars' for m in snapshot['modules']):data['versions']['separate_stars']=STAR_VERSION
+        if any(m['kind']=='syqon' for m in snapshot['modules']):data['versions']['syqon']=SYQON_VERSION
         if any(m['kind']=='freeze' for m in snapshot['modules']):data['versions']['freeze']=FREEZE_VERSION
         data['output']['exports']=dict(snapshot.get('exports',dict(components=False,rgb=False,palette_source=None)))
         if any(m['kind']=='palette' for m in snapshot['modules']):data['versions']['palette']='9.7-nebula-0.6.8'
@@ -735,12 +773,14 @@ class Pipeline:
             return dict(state_index=data['input']['state_index'],ghs=gs,integrated=True,modules=[dict(id=str(uuid.uuid4()),kind='eq',settings=eq,bypass=data['module']['bypass'],force=False)],divisor=data['preview_divisor'],format='Host document' if data['output']['format']=='Documento AstroSuite' else data['output']['format'],path=data['output']['path'])
         if data.get('schema')!=2 or data.get('application')!='AstroChain Prototype':raise ValueError('Unsupported project')
         if data['source']['sha256']!=self.fingerprint:raise ValueError('Select the same original image as the project.')
-        supported=dict(hdr_fusion=HDR_FUSION_VERSION,masks=MASKS_VERSION,recombine_stars=RECOMBINE_VERSION,separate_stars=STAR_VERSION,stretch=STRETCH_VERSION,statistical=STATISTICAL_VERSION,clahe=CLAHE_VERSION,palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
+        supported=dict(background_neutralization=BACKGROUND_VERSION,syqon=SYQON_VERSION,hdr_fusion=HDR_FUSION_VERSION,masks=MASKS_VERSION,recombine_stars=RECOMBINE_VERSION,separate_stars=STAR_VERSION,stretch=STRETCH_VERSION,statistical=STATISTICAL_VERSION,clahe=CLAHE_VERSION,palette_native=NATIVE_PALETTE_VERSION,freeze=FREEZE_VERSION,curves=CURVES_VERSION,ghs='0.4.1',spatial='0.1.2',compressor='0.2.2',parametric='0.2.2',filament='0.6.0-trial-b6',palette='9.7-nebula-0.6.8',colors='12.4',foraxx=FORAXX_VERSION,sky=SKY_VERSION)
         def version_supported(kind,version):
+            if kind == 'background_neutralization':return version in ('0.1.0', BACKGROUND_VERSION)
             if kind=='masks':return version in MASKS_COMPATIBLE_VERSIONS
             if kind=='response_profiles':return version==response_profiles.VERSION
             if kind=='spectral_extraction':return version==spectral.VERSION
             if kind=='recombine_stars':return version in RECOMBINE_VERSIONS
+            if kind=='separate_stars':return version in STAR_VERSIONS
             if kind=='stretch':return version in STRETCH_COMPATIBLE_VERSIONS
             if kind=='curves':return version in ('0.1.0',CURVES_VERSION)
             if kind=='palette_native':return version in NATIVE_PALETTE_COMPATIBLE_VERSIONS
@@ -755,10 +795,13 @@ class Pipeline:
                     p.setdefault('sky_method', 'offset')
                 return NativePaletteSettings(**p)
             if kind=='recombine_stars':return RecombineSettings(**p)
-            if kind=='separate_stars':return StarSettings(crop=p.get('crop'),crop_only=p.get('crop_only',False))
+            if kind=='syqon':return SyqonSettings(**dict(p,token=''))
+            if kind=='separate_stars':return StarSettings(crop=p.get('crop'),crop_only=p.get('crop_only',False),engine=p.get('engine','starnet'))
             if kind=='masks':return MaskNodeSettings.from_project(p)
             if kind=='freeze':return FreezeSettings(**p)
             if kind=='stretch':return StretchSettings.from_project(p,parse)
+            if kind == 'background_neutralization':
+                return BackgroundSettings(**({'method': 'protected', **p} if data['versions'].get('background_neutralization') == '0.1.0' else p))
             if kind=='statistical':return StatisticalSettings(**p)
             if kind=='hdr_fusion':
                 if 'linked' in p:
@@ -790,10 +833,13 @@ class Pipeline:
             if m['kind']=='masks' and data['versions'].get('masks') not in MASKS_COMPATIBLE_VERSIONS:raise ValueError('Incompatible Masks version')
             if m['kind']=='compressor' and (data['versions'].get('compressor')!='0.2.2' or type(m.get('auto_reference',True)) is not bool or type(m.get('spectrum',False)) is not bool):raise ValueError('Invalid compressor or missing version')
             if m['kind']=='palette_native' and data['versions'].get('palette_native') not in NATIVE_PALETTE_COMPATIBLE_VERSIONS:raise ValueError('Incompatible Palette Studio version')
+            if m['kind'] == 'background_neutralization' and data['versions'].get('background_neutralization') not in ('0.1.0', BACKGROUND_VERSION):
+                raise ValueError('Incompatible Background Neutralization version')
             if m['kind']=='statistical' and data['versions'].get('statistical')!=STATISTICAL_VERSION:raise ValueError('Incompatible Statistical Stretch version')
             if m['kind']=='stretch' and (data['versions'].get('stretch') not in STRETCH_COMPATIBLE_VERSIONS or data['versions'].get('statistical')!=STATISTICAL_VERSION):
                 raise ValueError('Incompatible Stretch version')
             if m['kind']=='recombine_stars' and data['versions'].get('recombine_stars') not in RECOMBINE_VERSIONS:raise ValueError('Incompatible Recombine Stars version')
+            if m['kind']=='syqon' and data['versions'].get('syqon')!=SYQON_VERSION:raise ValueError('Incompatible SyQon module version')
             if m['kind']=='hdr_fusion' and data['versions'].get('hdr_fusion')!=HDR_FUSION_VERSION:raise ValueError('Incompatible HDR Fusion version')
             if m['kind']=='clahe' and data['versions'].get('clahe')!=CLAHE_VERSION:raise ValueError('Incompatible CLAHE version')
             if m['kind']=='freeze' and data['versions'].get('freeze')!=FREEZE_VERSION:raise ValueError('Incompatible Freeze version')

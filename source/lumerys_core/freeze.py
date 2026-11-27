@@ -31,6 +31,7 @@ def signature(pipeline,state,input_settings,integrated,modules):
         # Empty/inactive new profile fields must not stale spectral1 Freeze
         # checkpoints, whose numeric processing has not changed.
         if module['kind']=='freeze' and not any(value['offset']):value.pop('offset')
+        if module['kind']=='separate_stars' and value['engine']=='starnet':value.pop('engine')
         if module['kind']=='recombine_stars' and not value.get('saturation'):
             value.pop('saturation', None)
         if module['kind']=='recombine_stars' and not value.get('document_title'):
@@ -54,6 +55,8 @@ def signature(pipeline,state,input_settings,integrated,modules):
                 if step.get('blend_mode') == 'Normal':
                     step.pop('blend_mode')
         if module['kind']=='palette_native':
+            if not any(value.get('gas_hue',())):value.pop('gas_hue',None)
+            if all(v==1 for v in value.get('gas_saturation',())):value.pop('gas_saturation',None)
             if value.get('sky_method') == 'offset' or not (value.get('protect') and value.get('sky_roi')):
                 value.pop('sky_method', None)
             if 'statistical' not in value.get('gas_stretch_methods',()):

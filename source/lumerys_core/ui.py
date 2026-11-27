@@ -446,7 +446,7 @@ class ChainDialog(InstrumentDialog):
         if self.busy or self.displayed is None or self.displayed['snapshot'].get('revision')!=self.revision:
             self.status.setText('Wait for the current node INPUT preview, then select again.');return
         if self.point.currentData()!=getattr(self,'sky_reference_point',None):
-            self.status.setText('Return to the selected Palette input before choosing the sky reference.');return
+            self.status.setText('Return to the selected node input before choosing the sky reference.');return
         editor.set_sky_roi(roi)
     def follow_curve_preview(self, editor):
         """Show curve edits when the shared preview is on an earlier stage."""
@@ -576,7 +576,10 @@ class ChainDialog(InstrumentDialog):
     def add_module(self,node):
         settings=HDRFusionSettings() if node.kind=='hdr_fusion' else StatisticalSettings() if node.kind=='statistical' else ClaheSettings() if node.kind=='clahe' else NativePaletteSettings() if node.kind=='palette_native' else FreezeSettings() if node.kind=='freeze' else CurveSettings() if node.kind=='curves' else self.pipeline.initial if node.kind=='ghs' else dynamics.Settings(mode='multiband') if node.kind=='compressor' else ParametricSettings() if node.kind=='parametric' else FilamentSettings() if node.kind=='filament' else PaletteSettings() if node.kind=='palette' else ColorSettings() if node.kind=='colors' else EqualizerSettings()
         self.kinds[node.key]=node.kind
-        if node.kind=='masks':
+        if node.kind=='syqon':
+            from .syqon_editor import SyqonEditor
+            self.editors[node.key]=SyqonEditor(self,node.key,Events,'SyQon')
+        elif node.kind=='masks':
             from lumerys_shared_masks.chain_editor import MaskNodeEditor
             self.editors[node.key]=MaskNodeEditor(self,node.key,node.serial)
         elif node.kind=='separate_stars':
@@ -595,6 +598,9 @@ class ChainDialog(InstrumentDialog):
         elif node.kind=='freeze':
             from .freeze_editor import FreezeEditor
             self.editors[node.key]=FreezeEditor(self,settings,'Freeze · '+str(node.serial),node.key)
+        elif node.kind == 'background_neutralization':
+            from .background_editor import BackgroundEditor
+            self.editors[node.key] = BackgroundEditor(self, node.key, 'Background Neutralization · '+str(node.serial))
         elif node.kind=='statistical':
             from .statistical_editor import StatisticalEditor
             self.editors[node.key]=StatisticalEditor(self,settings,'Statistical Stretch · '+str(node.serial))
@@ -693,6 +699,7 @@ class ChainDialog(InstrumentDialog):
     def remove_module(self,key):
         editor=self.editors.pop(key,None);self.kinds.pop(key,None)
         self.pipeline.star_pairs.pop(key,None)
+        self.pipeline.syqon_results.pop(key,None)
         if editor:editor.close();editor.deleteLater()
         if not self.loading:self.release_unused_freezes()
         self.graph_changed()
@@ -880,7 +887,7 @@ class ChainDialog(InstrumentDialog):
                 editor=self.editors.get(key)
                 if editor is not None and editor.kind == 'masks':
                     editor.accept_diagnostic(diagnostic, payload.get('snapshot',{}).get('revision'))
-                if editor is not None and editor.kind in ('stretch','statistical','compressor','parametric','filament','palette','palette_native','curves','freeze','recombine_stars'):editor.update_diagnostics(diagnostic)
+                if editor is not None and editor.kind in ('stretch','statistical','compressor','parametric','filament','palette','palette_native','curves','freeze','recombine_stars','background_neutralization'):editor.update_diagnostics(diagnostic)
         if payload.get('display_only'):
             self.busy=False;self.render_button.setEnabled(True);self.export_button.setEnabled(True)
             if payload['epoch']==self.display_epoch and payload['revision']==self.revision:
@@ -941,6 +948,8 @@ class ChainDialog(InstrumentDialog):
         if getattr(self,'sky_picker',None) is None:
             selected=self.editors.get(p['snapshot'].get('preview_point'))
             roi=selected.sky_roi if selected is not None and selected.kind=='palette_native' else None
+            if selected is not None and selected.kind == 'background_neutralization':
+                roi = p.get('diagnostics', {}).get(selected.key, {}).get('roi')
             self.view.set_sky_roi(roi or None)
         quality='Freeze native · reduced preview' if p.get('freeze_index') is not None and p['snapshot']['divisor']!=1 else 'Sky preview at selected resolution · final render at Full' if p.get('sky_proxy_preview') else 'Full resolution' if p['snapshot']['divisor']==1 else 'Approximate proxy · check Full for detail'
         if p.get('native_composite') and p['snapshot']['divisor'] != 1:

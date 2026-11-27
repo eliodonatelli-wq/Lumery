@@ -17,8 +17,8 @@ from . import response_profiles as profiles
 from . import profile_separation
 from .vendor.ghs.core import Settings as StretchSettings,analytic as stretch_analytic
 from .statistical_stretch import StatisticalSettings, process as statistical_process
-VERSION='1.6.0'
-COMPATIBLE_VERSIONS=('1.2.1','1.2.2','1.2.3','1.2.4','1.3.0','1.4.0','1.4.1','1.5.0',VERSION)
+VERSION='1.7.0'
+COMPATIBLE_VERSIONS=('1.2.1','1.2.2','1.2.3','1.2.4','1.3.0','1.4.0','1.4.1','1.5.0','1.6.0',VERSION)
 HOO=((1.,0.,0.),(0.,1.,0.),(0.,1.,0.))
 SHO=((0.,0.,1.),(1.,0.,0.),(0.,1.,0.))
 PERMUTATIONS=('HOO','SHO','HSO','HOS','SOH','OSH','OHS')
@@ -49,6 +49,8 @@ class NativePaletteSettings:
     gas_stat_no_clip:tuple=(False,False,False)
     gas_curves:tuple=(IDENTITY,)*3
     rgb_curves:tuple=(IDENTITY,)*3
+    gas_hue:tuple=(0.,0.,0.)
+    gas_saturation:tuple=(1.,1.,1.)
     normalize:bool=False
     norm_offset:float=0.
     norm_scale:float=1.
@@ -86,6 +88,12 @@ class NativePaletteSettings:
             object.__setattr__(self,key,values)
         for target,sigma,no_clip in zip(self.gas_stat_target,self.gas_stat_sigma,self.gas_stat_no_clip):
             StatisticalSettings(target=target,sigma=sigma,no_black_clip=no_clip)
+        for name,low,high in (('gas_hue',-180.,180.),('gas_saturation',0.,2.)):
+            values=getattr(self,name)
+            if len(values)!=3 or any(isinstance(v,(bool,np.bool_)) for v in values):raise ValueError('Three finite gas color values required')
+            values=np.asarray(values,dtype=float)
+            if values.shape!=(3,) or not np.isfinite(values).all() or np.any(values<low) or np.any(values>high):raise ValueError('Invalid '+name)
+            object.__setattr__(self,name,tuple(map(float,values)))
         for name in ('gas_curves','rgb_curves'):
             curves=tuple(tuple(tuple(map(float,p)) for p in c) for c in getattr(self,name))
             if len(curves)!=3:raise ValueError('Three curves required')
@@ -284,6 +292,12 @@ def render(image,s,channels=None,cancel=None):
     else:
         matrix=np.asarray(s.matrix if s.custom_matrix else tuple(tuple(1. if CHANNEL_INDEX[c]==i else 0. for i in range(3)) for c in s.palette))
         rgb=curved@matrix.T
+    from .gas_color import apply_gas_colors
+    if s.palette in FORAXX:
+        rgb=apply_gas_colors(rgb,required,s.gas_hue,s.gas_saturation,pip=pip,
+                             sulfur_weight=None if s.palette=='Foraxx HOO' else mix,cancel=cancel)
+    else:
+        rgb=apply_gas_colors(rgb,curved,s.gas_hue,s.gas_saturation,matrix=matrix,cancel=cancel)
     if s.protect and s.sky_roi and s.sky_method=='offset':
         h,w=rgb.shape[:2];x0,y0,x1,y1=s.sky_roi
         region=rgb[int(y0*h):max(int(np.ceil(y1*h)),int(y0*h)+1),int(x0*w):max(int(np.ceil(x1*w)),int(x0*w)+1)]

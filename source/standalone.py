@@ -31,7 +31,7 @@ def main():
         host = FileHost(args.starnet)
     app = QApplication.instance() or QApplication(sys.argv[:1])
     dialog = ChainDialog(image, metadata, host)
-    dialog.setWindowTitle('Lumerys · Independent DEV')
+    dialog.setWindowTitle('Lumerys')
     dialog.exec()
 
 

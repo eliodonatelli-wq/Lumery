@@ -3,15 +3,15 @@ import threading
 from dataclasses import replace
 
 import numpy as np
-from PyQt6.QtCore import QRunnable, Qt
+from PyQt6.QtCore import QRunnable, QSignalBlocker, Qt
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from .crop_preview import CropPreview
 from .diagnostics import format_error
 from .instrument_style import InstrumentDialog
 from .model import Cancelled
-from .star_node import StarPair, StarSettings, input_stamp, valid_pair
-from .star_separation import document_metadata, separate
+from .star_node import ENGINES, StarPair, StarSettings, input_stamp, valid_pair
+from .star_separation import document_metadata, separate, separate_axiom
 
 
 class SeparationJob(QRunnable):
@@ -64,6 +64,12 @@ class StarSeparationEditor(InstrumentDialog):
         layout.addWidget(self.aspect)
         self.selection = QLabel()
         layout.addWidget(self.selection)
+        self.engine = QComboBox()
+        self.engine.setAccessibleName('Separation engine')
+        for engine, label in ENGINES.items():
+            self.engine.addItem(label, engine)
+        self.engine.currentIndexChanged.connect(self.change_engine)
+        layout.addWidget(self.engine)
         self.crop_only = QCheckBox('Crop only')
         self.crop_only.toggled.connect(self.change_mode)
         layout.addWidget(self.crop_only)
@@ -94,7 +100,10 @@ class StarSeparationEditor(InstrumentDialog):
 
     def restore(self, settings):
         self.params = settings
-        self.crop_only.setChecked(settings.crop_only)
+        with QSignalBlocker(self.engine), QSignalBlocker(self.crop_only):
+            self.engine.setCurrentIndex(self.engine.findData(settings.engine))
+            self.crop_only.setChecked(settings.crop_only)
+        self.engine.setEnabled(self.event is None and not settings.crop_only)
 
     def current_input(self):
         snapshot = self.owner.snapshot(require_output=False)
@@ -147,6 +156,7 @@ class StarSeparationEditor(InstrumentDialog):
         self.pick.setEnabled(ready)
         self.aspect.setEnabled(ready)
         self.crop_only.setEnabled(self.event is None)
+        self.engine.setEnabled(self.event is None and not self.params.crop_only)
         self.clear.setEnabled(ready and self.params.crop is not None)
         self.run_button.setEnabled(ready and not self.params.crop_only and not self.pick.isChecked() and not self.bypass.isChecked())
         self.export.setEnabled(callable(getattr(self.host, 'publish', None)) and pair is not None)
@@ -201,6 +211,17 @@ class StarSeparationEditor(InstrumentDialog):
         if crop[0] < crop[2] and crop[1] < crop[3]:
             self.change_crop(crop)
 
+    def change_engine(self):
+        engine = self.engine.currentData()
+        if engine == self.params.engine:
+            return
+        self.params = replace(self.params, engine=engine, token='')
+        self.owner.pipeline.star_pairs.pop(self.key, None)
+        self.owner.schedule()
+        self.owner.timer.stop()
+        self.status.setText('Ready to separate stars.')
+        self.refresh()
+
     def change_mode(self, enabled):
         if enabled != self.params.crop_only:
             self.params = replace(self.params,crop_only=enabled,token='')
@@ -231,22 +252,29 @@ class StarSeparationEditor(InstrumentDialog):
 
     def start(self):
         try:
-            if self.host is None:
-                raise ValueError('Connect a host or configure StarNet in the standalone launcher.')
-            executable, weights = self.host.starnet_paths()
             state, ghs, integrated, upstream, module = self.current_input()
+            settings = module['settings']
+            if settings.engine == 'starnet':
+                if self.host is None:
+                    raise ValueError('Connect a host or configure StarNet in the standalone launcher.')
+                executable, weights = self.host.starnet_paths()
         except (OSError, ValueError) as exc:
             self.status.setText(str(exc))
             return
         pixels, origin, prepared_stamp, input_state = self.ingress
-        crop = module['settings'].crop
-        stamp = input_stamp(self.owner.pipeline, state, ghs, integrated, upstream, crop)
+        crop = settings.crop
+        stamp = input_stamp(self.owner.pipeline, state, ghs, integrated, upstream, crop, settings.engine)
         if stamp[0] != prepared_stamp[0]:
             self.status.setText('Input changed. Reopen Separate Stars to refresh the preview.')
             return
         offset = tuple(a+b for a,b in zip(origin, crop[:2])) if crop else origin
         def process():
-            images = separate(pixels, crop, executable, weights, self.event, self.events.progress.emit, state=input_state)
+            if settings.engine == 'starnet':
+                images = separate(pixels, crop, executable, weights, self.event, self.events.progress.emit,
+                                  state=input_state)
+            else:
+                images = separate_axiom(pixels, crop, settings.engine, self.event, self.events.progress.emit,
+                                        state=input_state)
             return StarPair.capture(stamp, images, offset, input_state)
         self.launch('pair', process)
 
@@ -270,12 +298,13 @@ class StarSeparationEditor(InstrumentDialog):
             pair = payload['result']
             try:
                 state, ghs, integrated, upstream, module = self.current_input()
-                current = input_stamp(self.owner.pipeline,state,ghs,integrated,upstream,module['settings'].crop)
+                settings = module['settings']
+                current = input_stamp(self.owner.pipeline,state,ghs,integrated,upstream,settings.crop,settings.engine)
             except ValueError:
                 current = None
             if pair.signature == current and not self.bypass.isChecked():
                 self.owner.pipeline.star_pairs[self.key] = pair
-                self.params = StarSettings(self.params.crop, pair.token)
+                self.params = replace(self.params, token=pair.token)
                 self.status.setText('Starless is ready for downstream nodes.')
                 self.owner.schedule()
                 self.owner.timer.stop()
@@ -292,11 +321,11 @@ class StarSeparationEditor(InstrumentDialog):
         opened = 0
         try:
             for name,image,kind in zip(('Starless','Stars'),pair.images,('STARLESS','DIFF')):
-                metadata = document_metadata(self.owner.pipeline.metadata,image,self.params.crop,kind,pair.offset,state=pair.state)
+                metadata = document_metadata(self.owner.pipeline.metadata,image,self.params.crop,kind,pair.offset,state=pair.state,engine=self.params.engine)
                 self.host.publish(image.copy(),metadata=metadata,name='Lumerys · '+name)
                 opened += 1
         except Exception as exc:
-            self.events.diagnostic.emit(format_error(exc, 'StarNet document output'))
+            self.events.diagnostic.emit(format_error(exc, 'Separate Stars document output'))
             self.status.setText(f'Output error after opening {opened} document(s). {exc}')
             return
         self.status.setText('Opened Starless and Stars in the connected host.')

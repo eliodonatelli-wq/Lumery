@@ -160,6 +160,10 @@ def draw_module_icon(painter, kind, accent, rect=QRectF(18, 23, 30, 30)):
             painter.drawEllipse(QPointF(12,10),2,2)
         else:path.cubicTo(22, 25, 9, 6, 26, 4)
         painter.drawPath(path)
+    elif kind == 'background_neutralization':
+        painter.drawRoundedRect(QRectF(4, 6, 22, 18), 3, 3)
+        painter.drawLine(QPointF(10, 15), QPointF(20, 15))
+        painter.drawLine(QPointF(15, 10), QPointF(15, 20))
     elif kind in ('palette_native', 'palette'):
         path.moveTo(26, 18)
         path.cubicTo(31, 8, 22, 1, 13, 3)

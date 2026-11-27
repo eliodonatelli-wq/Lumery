@@ -127,7 +127,7 @@ def blend(ingress, processed, mask, *, ingress_geometry, processed_geometry,
     return result
 
 
-PHOTO_KINDS = frozenset(('stretch', 'ghs', 'statistical', 'clahe', 'eq',
+PHOTO_KINDS = frozenset(('background_neutralization', 'stretch', 'ghs', 'statistical', 'clahe', 'eq',
                          'compressor', 'parametric', 'filament', 'palette',
                          'palette_native', 'colors', 'curves'))
 STELLAR_KINDS = frozenset(('separate_stars', 'recombine_stars'))
@@ -162,6 +162,8 @@ def resolve_bindings(modules):
                        and not module['bypass'] else None)
             continue
         if pending is not None and not module['bypass']:
+            if kind == 'syqon':
+                raise UnsupportedUniversalMask('The SyQon node does not support universal masks.')
             if kind in STELLAR_KINDS | {'freeze'}:
                 label = 'Freeze' if kind == 'freeze' else 'stellar nodes'
                 raise UnsupportedUniversalMask(f'Universal masking of {label} is not supported in phase 2.')

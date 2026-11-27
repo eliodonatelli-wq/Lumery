@@ -36,8 +36,8 @@ def build(output=None):
     library_hash = hashlib.sha256(library).hexdigest()
     products = {}
     for host, launcher, folder, installed_name in (
-        ('AstroSuite', 'Lumerys_AstroSuite.py', 'lumerys_shared_dev/', 'Lumerys_AstroSuite.py'),
-        ('Siril', 'Lumerys_Siril.py', '', 'Lumerys_Shared_DEV.py'),
+        ('AstroSuite', 'Lumerys_AstroSuite.py', 'lumerys/', 'Lumerys_AstroSuite.py'),
+        ('Siril', 'Lumerys_Siril.py', '', 'Lumerys_Siril.py'),
     ):
         payload = {
             folder + installed_name: (SOURCE / launcher).read_bytes(),

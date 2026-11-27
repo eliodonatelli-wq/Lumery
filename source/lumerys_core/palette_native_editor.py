@@ -2,7 +2,7 @@
 from dataclasses import asdict
 from .instrument_style import InstrumentDialog
 from PyQt6.QtCore import Qt,pyqtSignal,QTimer
-from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QTabWidget,QWidget,QLabel,QPushButton,QCheckBox,QComboBox,QSlider,QLineEdit,QFileDialog,QScrollArea,QMessageBox,QApplication
+from PyQt6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QTabWidget,QWidget,QLabel,QPushButton,QCheckBox,QComboBox,QSlider,QLineEdit,QFileDialog,QScrollArea,QMessageBox,QApplication,QGroupBox
 from .palette_native import NativePaletteSettings,PALETTES,FORAXX
 from .curve_graph import CurveGraph
 from .tone_curve import IDENTITY
@@ -51,6 +51,13 @@ class GasStretchSlider(NumericSlider):
     STEPS=140000
     def __init__(self,initial):
         super().__init__(0.,14.,initial);self.setFine(False)
+    def setFine(self,enabled):super().setFine(False)
+
+class GasColorSlider(NumericSlider):
+    """Hue/saturation need useful full travel, independent of generic Fine mode."""
+    STEPS=36000
+    def __init__(self,low,high,initial):
+        super().__init__(low,high,initial);self.setFine(False)
     def setFine(self,enabled):super().setFine(False)
 
 class ResettableSlider(QSlider):
@@ -143,6 +150,18 @@ class NativePaletteEditor(InstrumentDialog):
         self.graph=CurveGraph();self.graph.setMinimumSize(400,300);f.addRow(self.graph)
         n=QLabel('Monotone curves: click to add, drag to edit, right click to delete. Linear extrapolation outside the curve domain; no data clipping. Sky neutralization protects the white point after RGB curves. Legacy offset runs before RGB curves.');n.setWordWrap(True);f.addRow(n)
         button=QPushButton('Reset selected curve');button.clicked.connect(lambda:self.graph.set_points(IDENTITY));f.addRow(button)
+        self.gas_hues=list(settings.gas_hue);self.gas_saturations=list(settings.gas_saturation)
+        self.gas_color_group=QGroupBox('Selected gas color');color_form=QFormLayout(self.gas_color_group)
+        self.gas_hue_control=GasColorSlider(-180.,180.,0.)
+        self.gas_sat_control=GasColorSlider(0.,200.,100.)
+        self.gas_hue_control.slider.setAccessibleName('Selected gas hue')
+        self.gas_sat_control.slider.setAccessibleName('Selected gas saturation')
+        self.gas_hue_control.slider.setToolTip('Hue offset in degrees for this gas contribution. Double-click: neutral 0°. Foraxx weights remain unchanged.')
+        self.gas_sat_control.slider.setToolTip('Saturation of this gas contribution: 100% neutral, 0% gray. Double-click: 100%.')
+        color_form.addRow('Hue · degrees',self.gas_hue_control);color_form.addRow('Saturation · %',self.gas_sat_control)
+        f.addRow(self.gas_color_group)
+        self.gas_hue_control.valueChanged.connect(self.gas_color_changed)
+        self.gas_sat_control.valueChanged.connect(self.gas_color_changed)
         self.curve_select.currentIndexChanged.connect(self.switch_curve);self.graph.changed.connect(self.changed)
         f=page('Sky protection')
         self.check(f,'protect','Neutralize sky using the selected rectangle')
@@ -325,9 +344,22 @@ class NativePaletteEditor(InstrumentDialog):
             self.controls['gas_stat_sigma'][i].setEnabled(enabled and not self.controls['gas_stat_no_clip'][i].isChecked())
             for label in self.gas_stat_labels[i]:label.setVisible(stat)
         self.stretch_controls[2].setToolTip('Applied after SII synthesis or acquisition' if available else 'Provide measured SII or enable synthetic SII')
+    def gas_color_changed(self,*args):
+        if self.loading or self.curve_index>=3:return
+        self.gas_hues[self.curve_index]=self.gas_hue_control.value()
+        self.gas_saturations[self.curve_index]=self.gas_sat_control.value()/100.
+        self.changed()
+    def sync_gas_color_controls(self):
+        gas=self.curve_index<3
+        self.gas_color_group.setVisible(gas)
+        if gas:
+            self.gas_color_group.setTitle(('Hα','OIII','SII')[self.curve_index]+' · contribution color')
+            for control,value in ((self.gas_hue_control,self.gas_hues[self.curve_index]),(self.gas_sat_control,100*self.gas_saturations[self.curve_index])):
+                blocked=control.blockSignals(True);control.setValue(value);control.blockSignals(blocked)
+
     def switch_curve(self,index):
         self.curves[self.curve_index]=tuple(map(tuple,self.graph.points));self.curve_index=index
-        self.graph.set_points(self.curves[index],emit=False)
+        self.graph.set_points(self.curves[index],emit=False);self.sync_gas_color_controls()
     def settings(self):
         d={};self.curves[self.curve_index]=tuple(map(tuple,self.graph.points))
         for k,c in self.controls.items():
@@ -338,9 +370,10 @@ class NativePaletteEditor(InstrumentDialog):
             elif isinstance(c,QLineEdit):d[k]=c.text()
             else:d[k]=c.value()
         if d.get('palette') in FORAXX:d['custom_matrix']=False
-        d.update(gas_curves=tuple(self.curves[:3]),rgb_curves=tuple(self.curves[3:]),sky_roi=self.sky_roi,response_profile=self.profiles.value(),channel_snapshots=self.channel_refs);return NativePaletteSettings(**d)
+        d.update(gas_hue=tuple(self.gas_hues),gas_saturation=tuple(self.gas_saturations),gas_curves=tuple(self.curves[:3]),rgb_curves=tuple(self.curves[3:]),sky_roi=self.sky_roi,response_profile=self.profiles.value(),channel_snapshots=self.channel_refs);return NativePaletteSettings(**d)
     def restore(self,s):
         self.loading=True;self.disconnect_sources();self.channel_refs=s.channel_snapshots;self.source_dirty.clear();self.curves=list(s.gas_curves+s.rgb_curves)
+        self.gas_hues=list(s.gas_hue);self.gas_saturations=list(s.gas_saturation)
         self.profiles.restore(s.response_profile)
         for k,c in self.controls.items():
             v=getattr(s,k)
@@ -357,7 +390,7 @@ class NativePaletteEditor(InstrumentDialog):
             elif isinstance(c,QLineEdit):c.setText(v)
             else:c.setValue(v)
         self.sky_roi=tuple(s.sky_roi);self.sky_auto.setText('Recalculate background' if self.sky_roi else 'Find background (Auto)');self.sky_status.setText('Sky reference rectangle selected' if self.sky_roi else 'No sky rectangle selected')
-        self.graph.set_points(self.curves[self.curve_index],emit=False);self.update_extraction_controls();self.refresh_channel_status();self.loading=False;self.update_stretch_controls()
+        self.graph.set_points(self.curves[self.curve_index],emit=False);self.update_extraction_controls();self.refresh_channel_status();self.loading=False;self.update_stretch_controls();self.sync_gas_color_controls()
     def reset(self):self.restore(NativePaletteSettings());self.bypass.setChecked(False);self.owner.view.set_sky_roi(None);self.owner.schedule()
     def update_diagnostics(self,d):
         text='Native frame: '+str(d.get('native_shape','—'))+' · Palette RGB output range '+str(d.get('range','—'))+' · '+('Artificial SII' if d.get('synthetic_sii') else 'No synthetic SII')

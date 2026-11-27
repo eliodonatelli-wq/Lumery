@@ -4,7 +4,13 @@ from uuid import uuid4
 
 from .freeze import signature
 
-VERSION = '1.0.0'
+VERSION = '1.1.0'
+COMPATIBLE_VERSIONS = ('1.0.0', VERSION)
+ENGINES = {
+    'starnet': 'StarNet',
+    'axiom-mini': 'Axiom Mini (free)',
+    'axiom': 'Axiom V4 (premium)',
+}
 
 
 @dataclass(frozen=True)
@@ -12,8 +18,11 @@ class StarSettings:
     crop: tuple | None = None
     token: str = ''
     crop_only: bool = False
+    engine: str = 'starnet'
 
     def __post_init__(self):
+        if not isinstance(self.engine, str) or self.engine not in ENGINES:
+            raise ValueError('Unsupported Separate Stars engine.')
         if type(self.crop_only) is not bool:
             raise ValueError('Invalid crop mode.')
         if self.crop is not None:
@@ -39,8 +48,8 @@ class StarPair:
         return cls(stamp, uuid4().hex, images, offset, state)
 
 
-def input_stamp(pipeline, state, ghs, integrated, upstream, crop):
-    return signature(pipeline, state, ghs, integrated, upstream), crop
+def input_stamp(pipeline, state, ghs, integrated, upstream, crop, engine='starnet'):
+    return signature(pipeline, state, ghs, integrated, upstream), crop, engine
 
 
 def valid_pair(pipeline, state, ghs, integrated, upstream, module):
@@ -49,6 +58,6 @@ def valid_pair(pipeline, state, ghs, integrated, upstream, module):
         return None
     pair = pipeline.star_pairs.get(module['id'])
     if pair is not None and settings.token == pair.token:
-        if pair.signature == input_stamp(pipeline, state, ghs, integrated, upstream, settings.crop):
+        if pair.signature == input_stamp(pipeline, state, ghs, integrated, upstream, settings.crop, settings.engine):
             return pair
     return None

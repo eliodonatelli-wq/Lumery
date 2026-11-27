@@ -1,4 +1,4 @@
-"""StarNet 2.1 separation through an explicit executable and OpenCV TIFF bridge."""
+"""Native star separation and registered host document metadata."""
 from copy import deepcopy
 import os
 from pathlib import Path
@@ -42,16 +42,39 @@ def run_cli(command, folder, cancel):
                 raise ValueError(f'StarNet exited with code {process.returncode}. {details}')
 
 
-def separate(source, crop, executable, weights, cancel, progress, *, state="linear"):
-    import cv2
-
-    check_cancel(cancel)
+def crop_source(source, crop):
     if crop is not None:
         x0, y0, x1, y1 = crop
         height, width = source.shape[:2]
         if not (0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height):
             raise ValueError('Invalid crop rectangle.')
-        source = source[y0:y1, x0:x1]
+        return source[y0:y1, x0:x1]
+    return source
+
+
+def separate_axiom(source, crop, model, cancel, progress, *, state="linear"):
+    from .syqon import SyqonSettings, discover_cli, run
+
+    check_cancel(cancel)
+    executable = discover_cli()
+    if not executable:
+        raise ValueError('SyQon CLI was not found. Set up SyQon Studio to use Axiom.')
+    image = np.asarray(crop_source(source, crop), dtype=np.float64)
+    starless = run(image, SyqonSettings(model=model), state, executable, cancel,
+                   progress, require_native_domain=True)
+    progress('Preparing starless and signed residual…')
+    stars = image - starless
+    check_cancel(cancel)
+    if not np.isfinite(stars).all():
+        raise ValueError('Axiom produced a non-finite stellar residual.')
+    return starless, stars
+
+
+def separate(source, crop, executable, weights, cancel, progress, *, state="linear"):
+    import cv2
+
+    check_cancel(cancel)
+    source = crop_source(source, crop)
     progress('Preparing StarNet input…')
     image = np.array(source, dtype=np.float64, copy=True)
     if not np.isfinite(image).all():
@@ -123,15 +146,23 @@ def cropped_metadata(metadata, pixels, offset, *, rebuild=False):
     return result
 
 
-def document_metadata(metadata, pixels, crop, kind, offset=None, *, state="linear"):
+def document_metadata(metadata, pixels, crop, kind, offset=None, *, state="linear", engine="starnet"):
     result = cropped_metadata(metadata, pixels, offset or (crop[:2] if crop else (0, 0)), rebuild=True)
     header = result.get('_fits_header')
     if header is not None and hasattr(header, 'add_history'):
-        header['STNTYPE'] = kind
-        header['STNSTATE'] = state
-        mode = 'reversible MTF' if state == 'linear' else 'direct tonal input'
-        header.add_history(f'StarNet 2.1, {mode}, 16-bit TIFF bridge')
+        if engine == 'starnet':
+            header['STNTYPE'] = kind
+            header['STNSTATE'] = state
+            mode = 'reversible MTF' if state == 'linear' else 'direct tonal input'
+            header.add_history(f'StarNet 2.1, {mode}, 16-bit TIFF bridge')
+        else:
+            header['STARENG'] = engine
+            header['STARTYPE'] = kind
+            header['STARSTAT'] = state
+            header.add_history(f'SyQon CLI {engine}, native-domain FITS, {kind}')
     result.pop('astrochain', None)
     result.pop('adaptive_ghs_stretch', None)
     result['star_separation'] = dict(linear=state == 'linear', kind=kind, crop=crop)
+    if engine != 'starnet':
+        result['star_separation']['engine'] = engine
     return result

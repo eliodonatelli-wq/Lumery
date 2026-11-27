@@ -67,7 +67,7 @@ class SirilAdapter:
         header = header.copy() if isinstance(header, fits.Header) else fits.Header()
         for key in ('BSCALE', 'BZERO', 'BLANK', 'CHECKSUM', 'DATASUM', 'DATAMIN', 'DATAMAX'):
             header.remove(key, ignore_missing=True, remove_all=True)
-        header.add_history('Lumerys shared development - Siril adapter')
+        header.add_history('Lumerys - Siril adapter')
         for key in ('CHANNEL', 'SYNTHSII', 'SIIFORM', 'GASSTAGE', 'RGBPARENT', 'PALNODE'):
             if key in metadata:
                 header[key] = metadata[key]

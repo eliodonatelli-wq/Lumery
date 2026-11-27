@@ -2,16 +2,16 @@
 
 Lumerys provides an interactive astrophotography workflow with a shared processing engine, a PyQt6 interface and adapters for Astro Suite Pro and Siril.
 
-## Download 0.11.0-beta1
+## Download 0.11.0-rc2
 
 Choose the package for your application. Both packages contain the same shared engine and interface.
 
 | Application | Download | Installation |
 | --- | --- | --- |
-| Astro Suite Pro | [Download for Astro Suite](https://github.com/eliodonatelli-wq/Lumery/releases/download/v0.11.0-beta1/Lumerys_0.11.0-beta1_AstroSuite.zip) | Extract the `lumerys_shared_dev` folder into the Astro Suite user scripts folder, reload scripts and choose **Development Tests → Lumerys · Shared Code DEV**. |
-| Siril | [Download for Siril](https://github.com/eliodonatelli-wq/Lumery/releases/download/v0.11.0-beta1/Lumerys_0.11.0-beta1_Siril.zip) | Extract `Lumerys_Shared_DEV.py` and `_lumerys_shared_lib.zip` into a configured Siril scripts folder, run `reloadscripts`, open an image and choose **Scripts → Python Scripts → Scripts → Lumerys_Shared_DEV.py**. |
+| Astro Suite Pro | [Download for Astro Suite](https://github.com/eliodonatelli-wq/Lumery/releases/download/v0.11.0-rc2/Lumerys_0.11.0-rc2_AstroSuite.zip) | Extract the `lumerys` folder into the Astro Suite user scripts folder, reload scripts and choose **Environments → Lumerys**. |
+| Siril | [Download for Siril](https://github.com/eliodonatelli-wq/Lumery/releases/download/v0.11.0-rc2/Lumerys_0.11.0-rc2_Siril.zip) | Extract `Lumerys_Siril.py` and `_lumerys_shared_lib.zip` into a configured Siril scripts folder, run `reloadscripts`, open an image and choose **Scripts → Python Scripts → Scripts → Lumerys_Siril.py**. |
 
-[Release notes and verification manifest](https://github.com/eliodonatelli-wq/Lumery/releases/tag/v0.11.0-beta1)
+[Release notes and verification manifest](https://github.com/eliodonatelli-wq/Lumery/releases/tag/v0.11.0-rc2)
 
 ## Italian manual
 

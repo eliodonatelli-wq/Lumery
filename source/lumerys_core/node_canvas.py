@@ -4,7 +4,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QFont, QPainter, QPainterPath, QLi
 from .instrument_style import paint_metal, draw_module_icon
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QMenu, QGraphicsRectItem, QGraphicsItem, QGraphicsObject, QGraphicsPathItem
 
-MODULE_CATALOG=(('masks','Masks'),('separate_stars','Separate Stars…'),('recombine_stars','Recombine Stars…'),('stretch','Stretch'),('hdr_fusion','HDR Fusion'),('clahe','CLAHE'),('palette_native','Palette Studio'),('ghs','Adaptive GHS Stretch'),('statistical','Statistical Stretch'),('eq','Spatial Equalizer'),('compressor','Multiband Compressor'),('parametric','Astro Parametric Equalizer'),('filament','Nebula Filament Enhancer'),('colors','Nebula Colors & Tone'),('curves','Curves'),('freeze','Freeze · native checkpoint'))
+MODULE_CATALOG=(('syqon','SyQon'),('masks','Masks'),('separate_stars','Separate Stars…'),('recombine_stars','Recombine Stars…'),('stretch','Stretch'),('hdr_fusion','HDR Fusion'),('clahe','CLAHE'),('palette_native','Palette Studio'),('background_neutralization','Background Neutralization'),('ghs','Adaptive GHS Stretch'),('statistical','Statistical Stretch'),('eq','Spatial Equalizer'),('compressor','Multiband Compressor'),('parametric','Astro Parametric Equalizer'),('filament','Nebula Filament Enhancer'),('colors','Nebula Colors & Tone'),('curves','Curves'),('freeze','Freeze · native checkpoint'))
 
 class Port(QGraphicsObject):
     def __init__(self,node,direction):
@@ -58,7 +58,7 @@ class Node(QGraphicsRectItem):
         self.title = title
         self.freeze_label='LIVE'
         self.bypassed=False
-        self.compatibility='unknown';self.requirement='linear' if kind in ('ghs','statistical','hdr_fusion') else 'nonlinear' if kind=='clahe' else 'either' if kind in ('eq','compressor','parametric','filament','palette','colors','curves','freeze','palette_native','stretch','separate_stars','recombine_stars','masks') else None
+        self.compatibility='unknown';self.requirement='linear' if kind in ('ghs','statistical','hdr_fusion') else 'nonlinear' if kind=='clahe' else 'either' if kind in ('eq','compressor','parametric','filament','palette','colors','curves','freeze','palette_native','stretch','separate_stars','recombine_stars','masks','syqon','background_neutralization') else None
         self.bypass_button=BypassButton(self) if not permanent else None
         self.in_port=Port(self,'in') if key!='input' else None
         self.out_port=Port(self,'out') if key!='output' else None
@@ -87,7 +87,7 @@ class Node(QGraphicsRectItem):
         paint_metal(painter,QRectF(13,17,40,42),'well',4)
         draw_module_icon(painter,self.key if self.permanent else self.kind,self.accent)
         painter.setPen(QColor('#e1e8f3'));painter.setFont(QFont('Arial',11,QFont.Weight.DemiBold))
-        name='INPUT' if self.key=='input' else 'OUTPUT' if self.key=='output' else 'Masks' if self.kind=='masks' else 'Palette Studio' if self.kind=='palette_native' else 'Recombine Stars' if self.kind=='recombine_stars' else 'Separate Stars' if self.kind=='separate_stars' else 'Stretch' if self.kind=='stretch' else 'HDR Fusion' if self.kind=='hdr_fusion' else 'Statistical Stretch' if self.kind=='statistical' else 'Adaptive GHS' if self.kind=='ghs' else 'Compressor' if self.kind=='compressor' else 'Parametric EQ' if self.kind=='parametric' else 'Nebula Filament' if self.kind=='filament' else 'Nebula Palette' if self.kind=='palette' else 'Nebula Colors' if self.kind=='colors' else 'Freeze' if self.kind=='freeze' else 'CLAHE' if self.kind=='clahe' else 'Curves' if self.kind=='curves' else 'Spatial Equalizer'
+        name='SyQon' if self.kind=='syqon' else 'INPUT' if self.key=='input' else 'OUTPUT' if self.key=='output' else 'Masks' if self.kind=='masks' else 'Background Neutralization' if self.kind=='background_neutralization' else 'Palette Studio' if self.kind=='palette_native' else 'Recombine Stars' if self.kind=='recombine_stars' else 'Separate Stars' if self.kind=='separate_stars' else 'Stretch' if self.kind=='stretch' else 'HDR Fusion' if self.kind=='hdr_fusion' else 'Statistical Stretch' if self.kind=='statistical' else 'Adaptive GHS' if self.kind=='ghs' else 'Compressor' if self.kind=='compressor' else 'Parametric EQ' if self.kind=='parametric' else 'Nebula Filament' if self.kind=='filament' else 'Nebula Palette' if self.kind=='palette' else 'Nebula Colors' if self.kind=='colors' else 'Freeze' if self.kind=='freeze' else 'CLAHE' if self.kind=='clahe' else 'Curves' if self.kind=='curves' else 'Spatial Equalizer'
         painter.drawText(QRectF(64,17,192,23),name)
         painter.setFont(QFont('Arial',9));painter.setPen(QColor('#adbdc5'))
         subtitle='Original data · no stretch' if self.key=='input' else 'Rendering and export' if self.key=='output' else ({'linear':'Linear','nonlinear':'Non-linear','either':'Both'}[self.requirement]+' · '+str(self.serial).zfill(2))
@@ -137,7 +137,7 @@ class NodeCanvas(QGraphicsView):
         t=self.scene().addText(text,QFont('Arial',size));t.setDefaultTextColor(QColor(color));t.setPos(x,y)
     def add_module(self,kind='eq',identifier=None,position=None,edge=None):
         import uuid
-        if kind not in ('hdr_fusion','separate_stars','recombine_stars','clahe','statistical','ghs','eq','compressor','parametric','filament','palette','colors','curves','freeze','palette_native','stretch','masks'):raise ValueError('Unsupported module')
+        if kind not in ('background_neutralization','syqon','hdr_fusion','separate_stars','recombine_stars','clahe','statistical','ghs','eq','compressor','parametric','filament','palette','colors','curves','freeze','palette_native','stretch','masks'):raise ValueError('Unsupported module')
         if edge is not None:
             edge=tuple(edge)
             if edge not in self.edges:raise ValueError('The selected cable no longer exists')

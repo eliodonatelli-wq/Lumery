@@ -1,8 +1,8 @@
-"""Development launcher for the shared Lumerys code and Astro Suite adapter."""
-SCRIPT_NAME = 'Lumerys · Shared Code DEV'
-SCRIPT_GROUP = 'Development Tests'
-SCRIPT_VERSION = '0.11.0-beta1'
-SCRIPT_DESCRIPTION = 'Separate development build with an explicit Astro Suite adapter.'
+"""Launcher for the shared Lumerys code and Astro Suite adapter."""
+SCRIPT_NAME = 'Lumerys'
+SCRIPT_GROUP = 'Environments'
+SCRIPT_VERSION = '0.11.0-rc2'
+SCRIPT_DESCRIPTION = 'Lumerys image-processing environment for Astro Suite Pro.'
 
 
 def run(ctx):
@@ -39,7 +39,7 @@ def run(ctx):
             report_error(host or ctx, exc, 'AstroSuite adapter launcher')
         else:
             try:
-                ctx.log('Lumerys shared development bootstrap failed. Check Python dependencies.')
+                ctx.log('Lumerys could not start. Check Python dependencies.')
             except Exception:
                 pass
         if QMessageBox is not None:

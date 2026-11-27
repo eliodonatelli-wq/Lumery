@@ -1,53 +1,37 @@
-Lumerys shared runtime
-======================
+Lumerys 0.11.0-rc2
+==================
 
-The active project is the central Lumerys folder. Both host distributions are
-built from this source tree, with identical shared processing and Qt UI code.
+Astro Suite Pro
+---------------
+Extract the lumerys folder into the Astro Suite Pro user scripts directory.
+On macOS the default is ~/Library/Application Support/SASpro/scripts.
+If upgrading, back up and move the previous Lumerys folder out of the scripts
+directory. Reload scripts and choose Script > Environments > Lumerys.
 
-Astro Suite package
--------------------
-Extract the lumerys_shared_dev folder into the Astro Suite user scripts folder.
-Reload scripts and run Development Tests > Lumerys - Shared Code DEV.
-The package includes Lumerys_AstroSuite.py and _lumerys_shared_lib.zip.
+Siril
+-----
+Use a Siril version with Python script support. Extract Lumerys_Siril.py and
+_lumerys_shared_lib.zip together into a configured scripts folder. Move an
+older Lumerys package out of that folder after backing it up. Run reloadscripts,
+open an image, and launch Lumerys_Siril.py from the Python Scripts menu.
 
-Siril package
--------------
-Extract Lumerys_Shared_DEV.py and _lumerys_shared_lib.zip into a configured
-Siril scripts folder. Run reloadscripts in the Siril command field.
-Open an image, then choose Scripts > Python Scripts > Scripts > Lumerys_Shared_DEV.py.
-The first launch checks Python dependencies using Siril's ensure_installed.
+Requirements
+------------
+The host's Python runtime needs NumPy, SciPy, PyQt6, pyqtgraph, Astropy and
+OpenCV (cv2). Siril uses its Python dependency installer at launch.
 
-Development installations
--------------------------
-The installed development bridges point to the central source directory.
-Close and reopen Lumerys to use edited code. The Astro Suite launcher refreshes
-only this project's module namespaces when opening a new session.
-Standalone FITS launch is available with python standalone.py image.fits.
+For Separate Stars with StarNet, install and configure StarNet 2.1 and its
+weights separately. For SyQon, install SyQon Studio and its official CLI,
+sign in, and let Studio provision the required models. Axiom Mini is available
+to signed-in users. Axiom V4 requires an Axiom entitlement. Set SYQON_CLI_PATH
+if Lumerys cannot find the CLI automatically. The package contains Lumerys
+code only. Obtain the external applications and their components separately.
 
-Host behavior
--------------
-Astro Suite supplies open documents, immutable channel snapshots, document
-publication, logging and its StarNet executable configuration.
-Siril supplies a snapshot of its current image and a separate StarNet 2.1
-configuration. RENDER writes unique FITS files and loads the main result into
-Siril. Auxiliary channels remain as FITS files. Additional channel inputs can
-be selected from files. FITS files preserve float64 results on disk while
-Siril uses float32 working pixels.
+Release candidate notes
+-----------------------
+Scientific Grade and Studio Quality are not integrated. Standard Axiom can
+remove compact galaxies and change the sky background. Separate Stars retains
+the stellar pair in memory for the current session.
 
-Validation
-----------
-Automated checks cover adapter capture/publication, project compatibility and
-equality of shared code in the two packages. The user confirmed working real
-Astro Suite and Siril workflows and an apparently identical interface.
-Earlier live checks covered M42 input, StarNet 2.1 on a 768 x 768 crop,
-crop/HDR/Stretch, exact float32 readback and matching R/G/B exports.
-Cancellation, Windows and broader numerical coverage remain pending.
-Siril's NumPy/BLAS stack emitted matmul warnings, with finite results exactly
-matching independent calculations on three tested layouts.
-
-Historical versions
---------------------
-The central archive preserves prior sources, release files, Git histories,
-pending edits and previously tested installations. Its inventory records
-original locations and file hashes. Compatibility links retain old source
-and package paths for historical references.
+SyQon results are specific to their inputs and settings. Run the node again
+after changing upstream processing before rendering.

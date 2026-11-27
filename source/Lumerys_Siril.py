@@ -23,12 +23,12 @@ def main():
         try:
             source, metadata = host.capture_source()
             dialog = ChainDialog(source, metadata, host)
-            dialog.setWindowTitle('Lumerys · Siril DEV')
+            dialog.setWindowTitle('Lumerys')
             dialog.exec()
         except Exception as exc:
             from lumerys_core.diagnostics import report_error
             report_error(host, exc, 'Siril adapter')
-            QMessageBox.critical(None, 'Lumerys · Siril DEV', str(exc))
+            QMessageBox.critical(None, 'Lumerys', str(exc))
     finally:
         interface.disconnect()
 
